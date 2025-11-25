@@ -2,7 +2,7 @@ fastapi
 uvicorn[standard]
 pydantic
 python-multipart
-
+L
 loguru
 
 crewai
@@ -11,7 +11,7 @@ crewai-tools
 groq
 langchain-core
 langchain-groq
-
+LiteLLM
 sentence-transformers
 pinecone
 
