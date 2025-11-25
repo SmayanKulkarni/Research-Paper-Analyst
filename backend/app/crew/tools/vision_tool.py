@@ -1,16 +1,18 @@
 import base64
 import os
-from crewai import Tool
-
+from typing import List, Dict, Any
+from crewai.tools import tool
 
 def encode_image(path: str) -> str:
+    """Helper to encode image to base64."""
     with open(path, "rb") as f:
         return base64.b64encode(f.read()).decode("utf-8")
 
-
-def analyze_images(image_paths: list[str]) -> dict:
+@tool("Scientific Vision Tool")
+def vision_tool(image_paths: List[str]) -> Dict[str, Any]:
     """
-    Converts images to base64 so the vision model can analyze them.
+    Encodes images from the given paths into base64 format for vision analysis.
+    Returns a dictionary containing the encoded images and analysis instructions.
     """
     encoded = []
 
@@ -28,10 +30,3 @@ def analyze_images(image_paths: list[str]) -> dict:
             "labels, clarity, and scientific meaning."
         )
     }
-
-
-vision_tool = Tool(
-    name="vision_tool",
-    description="Encodes images and sends them for vision analysis.",
-    func=analyze_images
-)

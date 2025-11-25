@@ -1,3 +1,6 @@
+# Force Groq usage by disabling OpenAI env vars immediately
+import app.crew.disable_openai 
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 

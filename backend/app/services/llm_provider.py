@@ -3,16 +3,19 @@ from app.config import get_settings
 
 settings = get_settings()
 
+# Generic Text LLM
 groq_llm = ChatGroq(
     api_key=settings.GROQ_API_KEY,
-    model_name="llama-3.1-70b-versatile",
+    model_name=settings.GROQ_TEXT_MODEL,
     temperature=0.1,
     max_tokens=4096
 )
 
+# Vision LLM
 vision_llm = ChatGroq(
     api_key=settings.GROQ_API_KEY,
-    model_name="llama-4-scout-17b-16e-instruct",
+    model_name=settings.GROQ_VISION_MODEL,
     temperature=0.1,
     max_tokens=4096
 )
+

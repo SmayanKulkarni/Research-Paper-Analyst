@@ -1,10 +1,14 @@
-from crewai import Agent
+import os
+from crewai import Agent, LLM, Task, Crew
+from dotenv import load_dotenv
+load_dotenv()
 
-from app.config import get_settings
 
-settings = get_settings()
-GROQ_MODEL = settings.GROQ_MODEL_NAME
-
+llm = LLM(
+    model="groq/openai/gpt-oss-120b",
+    api_key=os.getenv("GROQ_API_KEY"),
+    temperature=0.3
+)
 
 def create_citation_agent() -> Agent:
     return Agent(
@@ -14,10 +18,12 @@ def create_citation_agent() -> Agent:
             "in research manuscripts."
         ),
         backstory=(
-            "You are meticulous about academic honesty, familiar with common "
-            "citation styles and best practices for attribution."
+            "You are meticulous about academic honesty, familiar with common citation "
+            "styles and best practices for attribution."
         ),
-        llm=GROQ_MODEL,
+        llm=llm,
         verbose=True,
         allow_delegation=False,
     )
+
+

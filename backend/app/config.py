@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Optional
 from pydantic_settings import BaseSettings
 from pydantic import Field
 
@@ -9,14 +10,14 @@ class Settings(BaseSettings):
     # ============================
     # GROQ
     # ============================
-    # CrewAI's Groq native provider will read GROQ_API_KEY from the environment.
     GROQ_API_KEY: str = Field(..., env="GROQ_API_KEY")
-    # This is the *CrewAI* model string, not raw Groq:
-    GROQ_MODEL_NAME: str = Field(
-        "groq/llama3-70b-8192",  # as per CrewAI + StackOverflow answer
-        env="GROQ_MODEL_NAME",
-    )
-    OPENAI_API_KEY: str = Field(..., env="OPENAI_API_KEY")
+    
+    # Raw model names from .env
+    GROQ_TEXT_MODEL: str = Field("llama3-70b-8192", env="GROQ_TEXT_MODEL")
+    GROQ_VISION_MODEL: str = Field("llama-4-scout-17b-16e-instruct", env="GROQ_VISION_MODEL")
+
+    # Make OpenAI Key Optional to avoid validation errors if empty
+    OPENAI_API_KEY: Optional[str] = Field(None, env="OPENAI_API_KEY")
 
     # ============================
     # STORAGE MODE SWITCH
@@ -32,7 +33,7 @@ class Settings(BaseSettings):
     PINECONE_INDEX_NAME: str = Field("research-plagiarism", env="PINECONE_INDEX_NAME")
 
     # ============================
-    # EMBEDDINGS (local, no OpenAI)
+    # EMBEDDINGS (local)
     # ============================
     EMBEDDING_MODEL_NAME: str = Field("BAAI/bge-large-en", env="EMBEDDING_MODEL_NAME")
     EMBEDDING_DIM: int = Field(1024, env="EMBEDDING_DIM")
@@ -52,10 +53,23 @@ class Settings(BaseSettings):
     UPLOADS_DIR: str = Field("uploads", env="UPLOADS_DIR")
     IMAGES_DIR: str = Field("images", env="IMAGES_DIR")
 
+    @property
+    def CREW_TEXT_MODEL(self):
+        """Returns the model string formatted for CrewAI (groq/model-name)"""
+        if self.GROQ_TEXT_MODEL.startswith("groq/"):
+            return self.GROQ_TEXT_MODEL
+        return f"groq/{self.GROQ_TEXT_MODEL}"
+
+    @property
+    def CREW_VISION_MODEL(self):
+        """Returns the vision model string formatted for CrewAI"""
+        if self.GROQ_VISION_MODEL.startswith("groq/"):
+            return self.GROQ_VISION_MODEL
+        return f"groq/{self.GROQ_VISION_MODEL}"
+
     class Config:
         env_file = ".env"
         case_sensitive = True
-        # Ignore random env vars like CREWAI_DISABLE_OPENAI instead of raising.
         extra = "ignore"
 
 

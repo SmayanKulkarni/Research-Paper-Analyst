@@ -1,10 +1,14 @@
-from crewai import Agent
+import os
+from crewai import Agent, LLM, Task, Crew
+from dotenv import load_dotenv
+load_dotenv()
 
-from app.config import get_settings
 
-settings = get_settings()
-GROQ_MODEL = settings.GROQ_MODEL_NAME
-
+llm = LLM(
+    model="groq/openai/gpt-oss-120b",
+    api_key=os.getenv("GROQ_API_KEY"),
+    temperature=0.3
+)
 
 def create_proofreader() -> Agent:
     return Agent(
@@ -17,7 +21,7 @@ def create_proofreader() -> Agent:
             "You are an expert academic editor with years of experience refining "
             "conference and journal submissions across computer science and engineering."
         ),
-        llm=GROQ_MODEL,
+        llm=llm,
         verbose=True,
         allow_delegation=False,
     )
