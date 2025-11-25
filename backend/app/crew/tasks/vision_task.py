@@ -6,11 +6,12 @@ from crewai import Task
 def create_vision_task(agent, images: List[str]) -> Task:
     return Task(
         description=(
-            "Analyze the scientific figures and tables located at these file paths:\n"
-            f"{images}\n\n"
-            "Evaluate clarity, labeling, legends, and whether each visual supports "
-            "the claims in the text. Suggest improvements."
+            "Analyze the scientific figures and tables at these paths:\n"
+            f"{', '.join(images)}\n\n"
+            "Check: clarity, labeling, legends, relevance. Suggest improvements."
         ),
-        expected_output="A figure/table analysis report with issues and specific improvement suggestions.",
+        expected_output="Key issues found in figures/tables and specific improvements.",
         agent=agent,
+        # OPTIMIZATION: Skip context from prior tasks to avoid message length issues
+        context=None,
     )

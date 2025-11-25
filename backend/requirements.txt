@@ -22,6 +22,11 @@ beautifulsoup4
 httpx
 tenacity
 
+# free search fallback
+duckduckgo_search
+crawl4ai
+arxiv
+
 pandas
 pyarrow
 fsspec

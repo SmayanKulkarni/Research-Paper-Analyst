@@ -1,15 +1,10 @@
-import os
-from crewai import Agent, LLM, Task, Crew
-from dotenv import load_dotenv
-load_dotenv()
+from crewai import Agent
 from app.crew.tools.plagiarism_tool import plagiarism_tool
+from app.services.llm_provider import get_crewai_llm
 
 
-llm = LLM(
-    model="groq/openai/gpt-oss-120b",
-    api_key=os.getenv("GROQ_API_KEY"),
-    temperature=0.7
-)
+# Plagiarism agent should be conservative with tokens; use lower max_tokens
+llm = get_crewai_llm(temperature=0.5, max_tokens=128)
 
 
 def create_plagiarism_agent() -> Agent:

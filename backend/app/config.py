@@ -13,8 +13,10 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = Field(..., env="GROQ_API_KEY")
     
     # Raw model names from .env
-    GROQ_TEXT_MODEL: str = Field("llama3-70b-8192", env="GROQ_TEXT_MODEL")
+    # Default text model (lighter, lower TPM usage). Can be overridden via .env
+    GROQ_TEXT_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_TEXT_MODEL")
     GROQ_VISION_MODEL: str = Field("llama-4-scout-17b-16e-instruct", env="GROQ_VISION_MODEL")
+    GROQ_COMPRESSION_MODEL: str = Field("llama-3-8b-8192", env="GROQ_COMPRESSION_MODEL")  # Smaller for efficiency
 
     # Make OpenAI Key Optional to avoid validation errors if empty
     OPENAI_API_KEY: Optional[str] = Field(None, env="OPENAI_API_KEY")
@@ -53,6 +55,16 @@ class Settings(BaseSettings):
     UPLOADS_DIR: str = Field("uploads", env="UPLOADS_DIR")
     IMAGES_DIR: str = Field("images", env="IMAGES_DIR")
 
+    # ============================
+    # TOKEN OPTIMIZATION (NEW)
+    # ============================
+    GROQ_TPM_LIMIT: int = Field(8000, env="GROQ_TPM_LIMIT")  # Free tier is 8000 TPM
+    TOKEN_BUDGET_SAFETY_MARGIN: float = Field(0.80, env="TOKEN_BUDGET_SAFETY_MARGIN")  # Use up to 80% before degradation
+    MAX_CHUNKS_TO_COMPRESS: int = Field(10, env="MAX_CHUNKS_TO_COMPRESS")  # Limit compression scope
+    MAX_ANALYSIS_TEXT_LENGTH: int = Field(5000, env="MAX_ANALYSIS_TEXT_LENGTH")  # Max chars to send to agents
+    # Concurrency controls for LLM calls in this process (reduce TPM bursts)
+    CREW_MAX_CONCURRENT_LLM_CALLS: int = Field(2, env="CREW_MAX_CONCURRENT_LLM_CALLS")
+
     @property
     def CREW_TEXT_MODEL(self):
         """Returns the model string formatted for CrewAI (groq/model-name)"""
@@ -66,6 +78,13 @@ class Settings(BaseSettings):
         if self.GROQ_VISION_MODEL.startswith("groq/"):
             return self.GROQ_VISION_MODEL
         return f"groq/{self.GROQ_VISION_MODEL}"
+
+    @property
+    def CREW_COMPRESSION_MODEL(self):
+        """Returns the compression model string formatted for CrewAI"""
+        if self.GROQ_COMPRESSION_MODEL.startswith("groq/"):
+            return self.GROQ_COMPRESSION_MODEL
+        return f"groq/{self.GROQ_COMPRESSION_MODEL}"
 
     class Config:
         env_file = ".env"

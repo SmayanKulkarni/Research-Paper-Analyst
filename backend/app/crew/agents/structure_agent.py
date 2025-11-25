@@ -1,14 +1,10 @@
-import os
-from crewai import Agent, LLM, Task, Crew
-from dotenv import load_dotenv
-load_dotenv()
+from crewai import Agent
+from app.services.llm_provider import get_crewai_llm
 
 
-llm = LLM(
-    model="groq/openai/gpt-oss-120b",
-    api_key=os.getenv("GROQ_API_KEY"),
-    temperature=0.2
-)
+# Structure analysis can be concise; reduce max_tokens
+llm = get_crewai_llm(temperature=0.2, max_tokens=128)
+
 
 def create_structure_agent() -> Agent:
     return Agent(

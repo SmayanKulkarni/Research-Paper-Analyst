@@ -1,14 +1,11 @@
-import os
-from crewai import Agent, LLM, Task, Crew
-from dotenv import load_dotenv
-load_dotenv()
+from crewai import Agent
+from app.services.llm_provider import get_crewai_compression_llm
 
 
-llm = LLM(
-    model="groq/openai/gpt-oss-120b",
-    api_key=os.getenv("GROQ_API_KEY"),
-    temperature=0.3
-)
+# OPTIMIZATION: Use smaller, faster llama-3-8b for compression instead of 70b models
+llm = get_crewai_compression_llm(temperature=0.3)
+
+
 def create_compression_agent():
     return Agent(
         role="Document Compression Specialist",
