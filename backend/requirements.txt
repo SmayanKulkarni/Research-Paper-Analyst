@@ -2,7 +2,6 @@ fastapi
 uvicorn[standard]
 pydantic
 python-multipart
-L
 loguru
 
 crewai
@@ -15,17 +14,24 @@ LiteLLM
 sentence-transformers
 pinecone
 
-pypdf
 pymupdf
+pypdf
 
 beautifulsoup4
 httpx
 tenacity
 
-# free search fallback
-duckduckgo_search
-crawl4ai
+# arxiv integration (for cited paper extraction)
 arxiv
+
+# NLP preprocessing (abstractive summarization, key-phrase extraction, entity recognition)
+transformers
+spacy
+keybert
+torch
+
+# token counting
+tiktoken
 
 pandas
 pyarrow

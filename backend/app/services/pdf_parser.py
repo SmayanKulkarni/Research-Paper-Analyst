@@ -1,18 +1,19 @@
 import os
 import uuid
-from typing import Dict, List
+from typing import Dict, List, Any
 
 import fitz  # PyMuPDF
 from app.config import get_settings
 from app.utils.logging import logger
+from app.services.citation_extractor import extract_citations_from_text, filter_arxiv_citations
 
 settings = get_settings()
 
 
-def parse_pdf_to_text_and_images(file_path: str) -> Dict[str, List[str]]:
+def parse_pdf_to_text_and_images(file_path: str, extract_citations: bool = True) -> Dict[str, Any]:
     """
-    Extract full text and save page images from a PDF.
-    Returns dict: { "text": str, "images": [image_paths] }
+    Extract full text, save page images, and optionally extract citations from a PDF.
+    Returns dict: { "text": str, "images": [image_paths], "citations": [...] }
     """
     storage_root = settings.STORAGE_ROOT
     images_dir = os.path.join(storage_root, settings.IMAGES_DIR)
@@ -40,4 +41,16 @@ def parse_pdf_to_text_and_images(file_path: str) -> Dict[str, List[str]]:
     full_text = "\n\n".join(all_text_parts)
     logger.info(f"Parsed PDF {file_path}: {len(all_text_parts)} text chunks, {len(image_paths)} images")
 
-    return {"text": full_text, "images": image_paths}
+    result: Dict[str, Any] = {"text": full_text, "images": image_paths, "citations": []}
+    
+    # Extract citations if requested
+    if extract_citations:
+        try:
+            all_citations = extract_citations_from_text(full_text, max_citations=50)
+            arxiv_citations = filter_arxiv_citations(all_citations)
+            result["citations"] = arxiv_citations
+            logger.info(f"Extracted {len(arxiv_citations)} arXiv-linkable citations from PDF")
+        except Exception as e:
+            logger.warning(f"Citation extraction failed: {e}")
+
+    return result

@@ -7,41 +7,43 @@ from fastapi.concurrency import run_in_threadpool
 from app.config import get_settings
 from app.models.schemas import UploadResponse
 from app.services.pdf_parser import parse_pdf_to_text_and_images
-from app.services.web_crawler import crawl_and_ingest
+from app.services.arxiv_finder import ingest_arxiv_papers_from_citations
+from app.utils.logging import logger
 
 
 settings = get_settings()
 router = APIRouter(prefix="/api/uploads", tags=["uploads"])
 
 
-async def _crawl_on_upload(dest_path: str, file_id: str, max_papers: int = 5):
-    """Background task: parse uploaded PDF, craft a short query and crawl arXiv for similar papers."""
+async def _process_citations_on_upload(dest_path: str, file_id: str, max_papers: int = 5):
+    """
+    Background task: parse uploaded PDF, extract citations, resolve to arXiv papers,
+    and ingest them into the vector store.
+    
+    Handles case where no citations found gracefully.
+    """
     try:
         parsed = await run_in_threadpool(parse_pdf_to_text_and_images, dest_path)
-        text = parsed.get("text", "") if isinstance(parsed, dict) else ""
-
-        # Build a compact query: prefer the abstract (if present), else first 400 chars
-        q = ""
-        lower = text.lower()
-        if "abstract" in lower:
-            # try to find the abstract block
-            idx = lower.find("abstract")
-            snippet = text[idx : idx + 1200]
-            q = snippet.strip().replace("\n", " ")[:800]
-        else:
-            q = text.strip().replace("\n", " ")[:800]
-
-        if not q:
-            q = file_id
-
-        # run the crawler: limit to max_papers (default 5)
-        await crawl_and_ingest(q, max_raw_results=25, max_papers=max_papers)
+        citations = parsed.get("citations", [])
+        
+        if not citations:
+            logger.info(f"No arXiv-linkable citations found in {file_id}")
+            return
+        
+        logger.info(f"Processing {len(citations)} citations from {file_id}")
+        
+        # Resolve citations to arXiv papers and ingest
+        ingested = await run_in_threadpool(
+            ingest_arxiv_papers_from_citations,
+            citations,
+            max_papers
+        )
+        
+        logger.info(f"Successfully ingested {len(ingested)} arXiv papers from citations in {file_id}")
+        
     except Exception as e:
-        # don't fail the upload on crawl errors; log and continue
-        from app.utils.logging import logger
-
-        logger.exception(f"Background crawl failed for {dest_path}: {e}")
-
+        # Don't fail the upload on citation processing errors; log and continue
+        logger.exception(f"Citation processing failed for {file_id}: {e}")
 
 
 @router.post("/", response_model=UploadResponse)
@@ -59,10 +61,11 @@ async def upload_pdf(file: UploadFile = File(...), background_tasks: BackgroundT
     with open(dest_path, "wb") as f:
         f.write(content)
 
-    # schedule background crawl/ingest for similar papers (non-blocking)
+    # Schedule background citation extraction and paper ingestion (non-blocking)
     if background_tasks is not None:
-        background_tasks.add_task(_crawl_on_upload, dest_path, file_id, 5)
+        background_tasks.add_task(_process_citations_on_upload, dest_path, file_id, max_papers=5)
 
     return JSONResponse(
         content=UploadResponse(file_id=file_id, filename="paper.pdf").dict()
     )
+

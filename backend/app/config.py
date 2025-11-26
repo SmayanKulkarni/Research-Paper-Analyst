@@ -58,12 +58,12 @@ class Settings(BaseSettings):
     # ============================
     # TOKEN OPTIMIZATION (NEW)
     # ============================
-    GROQ_TPM_LIMIT: int = Field(8000, env="GROQ_TPM_LIMIT")  # Free tier is 8000 TPM
-    TOKEN_BUDGET_SAFETY_MARGIN: float = Field(0.80, env="TOKEN_BUDGET_SAFETY_MARGIN")  # Use up to 80% before degradation
-    MAX_CHUNKS_TO_COMPRESS: int = Field(10, env="MAX_CHUNKS_TO_COMPRESS")  # Limit compression scope
-    MAX_ANALYSIS_TEXT_LENGTH: int = Field(5000, env="MAX_ANALYSIS_TEXT_LENGTH")  # Max chars to send to agents
+    GROQ_TPM_LIMIT: int = Field(6000, env="GROQ_TPM_LIMIT")  # Free tier actual limit (was 8000, reducing to actual)
+    TOKEN_BUDGET_SAFETY_MARGIN: float = Field(0.70, env="TOKEN_BUDGET_SAFETY_MARGIN")  # Use up to 70% before degradation (was 80%)
+    MAX_CHUNKS_TO_COMPRESS: int = Field(5, env="MAX_CHUNKS_TO_COMPRESS")  # Reduced from 10 to 5
+    MAX_ANALYSIS_TEXT_LENGTH: int = Field(3000, env="MAX_ANALYSIS_TEXT_LENGTH")  # Reduced from 5000 to 3000 chars
     # Concurrency controls for LLM calls in this process (reduce TPM bursts)
-    CREW_MAX_CONCURRENT_LLM_CALLS: int = Field(2, env="CREW_MAX_CONCURRENT_LLM_CALLS")
+    CREW_MAX_CONCURRENT_LLM_CALLS: int = Field(1, env="CREW_MAX_CONCURRENT_LLM_CALLS")  # Reduced from 2 to 1 (sequential)
 
     @property
     def CREW_TEXT_MODEL(self):

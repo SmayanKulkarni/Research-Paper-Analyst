@@ -10,7 +10,6 @@ from app.crew.agents.citation_agent import create_citation_agent
 from app.crew.agents.consistency_agent import create_consistency_agent
 from app.crew.agents.vision_agent import create_vision_agent
 from app.crew.agents.plagiarism_agent import create_plagiarism_agent
-from app.crew.agents.compression_agent import create_compression_agent
 
 from app.crew.tasks.proofreading_task import create_proofreading_task
 from app.crew.tasks.structure_task import create_structure_task
@@ -18,11 +17,13 @@ from app.crew.tasks.citation_task import create_citation_task
 from app.crew.tasks.consistency_task import create_consistency_task
 from app.crew.tasks.vision_task import create_vision_task
 from app.crew.tasks.plagiarism_task import create_plagiarism_task
-from app.crew.tasks.compression_task import create_compression_task
 
 from app.services.chunker import chunk_text
 from app.crew.tools.pdf_tool import load_pdf
 from app.services.token_budget import get_token_tracker
+from app.services.token_counter import log_token_summary, create_token_summary
+from app.services.nlp_preprocessor import preprocess_research_paper, preprocess_for_chunk_compression
+from app.services.compression import batch_compress_chunks
 from app.utils.logging import logger
 
 settings = get_settings()
@@ -33,6 +34,7 @@ def run_full_analysis(
     enable_plagiarism: bool = True,
     enable_vision: bool = True,
     enable_citation: bool = True,
+    enable_nlp_preprocessing: bool = False,  # DISABLED by default due to TPM limits
     max_chunks_to_compress: Optional[int] = None,  # Use config default if None
 ):
     pdf_data = load_pdf(file_id)
@@ -45,8 +47,37 @@ def run_full_analysis(
         max_chunks_to_compress = settings.MAX_CHUNKS_TO_COMPRESS
     max_text_length = settings.MAX_ANALYSIS_TEXT_LENGTH
     
-    # OPTIMIZATION: Limit chunks to compress (avoid excessive token usage)
-    chunks = chunk_text(text)
+    # OPTIMIZATION STEP 1: Apply NLP preprocessing BEFORE chunking (DISABLED by default)
+    # This extracts summaries, key phrases, and entities to reduce token usage
+    # Note: Re-enable only when TPM limits allow
+    if enable_nlp_preprocessing:
+        logger.info("Applying NLP preprocessing to research paper...")
+        try:
+            preprocess_result = preprocess_research_paper(
+                text,
+                enable_summarization=True,
+                enable_key_phrases=True,
+                enable_entities=False,  # Disable for speed
+                max_output_length=5000,
+            )
+            preprocessed_text = preprocess_result["processed_text"]
+            token_savings = preprocess_result["token_savings_estimate"]
+            logger.info(f"NLP preprocessing complete. Estimated token savings: ~{token_savings} tokens")
+            
+            # Log token summary for monitoring
+            token_summary = create_token_summary(text)
+            logger.info(f"Original text: {token_summary['input_tokens_simple']} tokens")
+            token_summary_after = create_token_summary(preprocessed_text)
+            logger.info(f"After NLP preprocessing: {token_summary_after['input_tokens_simple']} tokens")
+        except Exception as e:
+            logger.warning(f"NLP preprocessing failed ({e}), using original text")
+            preprocessed_text = text
+    else:
+        preprocessed_text = text
+        logger.info("NLP preprocessing disabled (enable_nlp_preprocessing=False)")
+    
+    # OPTIMIZATION STEP 2: Use extractive summarization to compress chunks (NO LLM)
+    chunks = chunk_text(preprocessed_text)
     chunks_to_process = chunks[:max_chunks_to_compress]
     
     if len(chunks) > max_chunks_to_compress:
@@ -56,20 +87,12 @@ def run_full_analysis(
     else:
         remaining_text = ""
 
-    compression_agent = create_compression_agent()
-    compression_tasks = [
-        create_compression_task(compression_agent, c) for c in chunks_to_process
-    ]
-
-    compression_crew = Crew(
-        agents=[compression_agent],
-        tasks=compression_tasks,
-        verbose=False
-    )
-
+    # Use non-LLM extractive summarization for compression
     try:
-        compressed_results = compression_crew.kickoff()
-        compressed_text = "\n\n".join(compressed_results)
+        logger.info(f"Applying extractive summarization to {len(chunks_to_process)} chunks...")
+        compressed_chunks = batch_compress_chunks(chunks_to_process, compression_ratio=0.5)
+        compressed_text = "\n\n".join(compressed_chunks)
+        logger.info(f"Compression complete. Result: {len(compressed_text)} chars")
     except Exception as e:
         logger.warning(f"Compression failed ({e}), using original text chunks instead")
         compressed_text = "\n\n".join(chunks_to_process)
@@ -82,6 +105,9 @@ def run_full_analysis(
     if len(compressed_text) > max_text_length:
         compressed_text = compressed_text[:max_text_length] + "\n\n[... text truncated for token efficiency ...]"
         logger.info(f"Truncated analysis text to {max_text_length} chars for token efficiency")
+
+    # Log token usage for this intermediate step
+    log_token_summary(compressed_text, context="post-compression")
 
     # STEP 2 — Send COMPRESSED TEXT to main analysis agents (excluding vision, which runs separately)
     proof = create_proofreader()

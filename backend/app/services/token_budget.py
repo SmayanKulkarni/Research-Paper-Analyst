@@ -1,11 +1,13 @@
 """Token budget tracking and rate-limit mitigation.
 
 Tracks per-analysis token usage to gracefully degrade when approaching Groq TPM limits.
+Includes per-agent and per-analysis metrics for detailed monitoring.
 """
 import time
 import threading
 from threading import Lock
-from typing import Dict
+from typing import Dict, List, Optional
+from collections import defaultdict
 from app.utils.logging import logger
 from app.config import get_settings
 
@@ -21,7 +23,7 @@ TOKEN_ESTIMATES = {
 }
 
 class TokenBudgetTracker:
-    """Track token usage and provide graceful degradation when approaching limits."""
+    """Track token usage with per-agent and per-analysis metrics."""
     
     def __init__(self, tpm_limit: int = 8000, safety_margin: float = 0.8):
         """
@@ -34,14 +36,28 @@ class TokenBudgetTracker:
         self.tokens_used = 0
         self.lock = Lock()
         self.last_reset = time.time()
+        
+        # Per-agent and per-analysis metrics
+        self.per_agent_usage: Dict[str, int] = defaultdict(int)  # agent_name -> tokens
+        self.per_agent_calls: Dict[str, int] = defaultdict(int)  # agent_name -> call count
+        self.per_analysis_metrics: Dict[str, dict] = {}  # analysis_id -> { estimated, actual, agents, ... }
+        self.current_analysis_id: Optional[str] = None
     
-    def add_usage(self, tokens: int):
-        """Record token usage."""
+    def add_usage(self, tokens: int, agent_name: Optional[str] = None):
+        """Record token usage, optionally attributed to an agent."""
         with self.lock:
             self.tokens_used += tokens
+            
+            if agent_name:
+                self.per_agent_usage[agent_name] += tokens
+                self.per_agent_calls[agent_name] += 1
+            
             remaining = self.safety_threshold - self.tokens_used
             if remaining < 0:
-                logger.warning(f"Token budget exceeded: used {self.tokens_used}/{self.safety_threshold}. Graceful degradation active.")
+                logger.warning(
+                    f"Token budget exceeded: used {self.tokens_used}/{self.safety_threshold}. "
+                    f"Graceful degradation active."
+                )
                 return False
             return True
     
@@ -74,6 +90,81 @@ class TokenBudgetTracker:
                 )
                 return False
             return True
+    
+    def start_analysis(self, analysis_id: str):
+        """Mark the start of a new analysis session for per-analysis tracking."""
+        with self.lock:
+            self.current_analysis_id = analysis_id
+            self.per_analysis_metrics[analysis_id] = {
+                "estimated_tokens": 0,
+                "actual_tokens": 0,
+                "start_time": time.time(),
+                "end_time": None,
+                "agents_used": set(),
+                "status": "in_progress",
+            }
+    
+    def end_analysis(self, analysis_id: str):
+        """Mark the end of an analysis session."""
+        with self.lock:
+            if analysis_id in self.per_analysis_metrics:
+                self.per_analysis_metrics[analysis_id]["end_time"] = time.time()
+                self.per_analysis_metrics[analysis_id]["status"] = "complete"
+    
+    def record_agent_call(self, analysis_id: str, agent_name: str, estimated_tokens: int, actual_tokens: int):
+        """Record a specific agent call with token estimates and actuals."""
+        with self.lock:
+            if analysis_id in self.per_analysis_metrics:
+                metrics = self.per_analysis_metrics[analysis_id]
+                metrics["estimated_tokens"] += estimated_tokens
+                metrics["actual_tokens"] += actual_tokens
+                metrics["agents_used"].add(agent_name)
+                
+                # Log divergence if significant
+                if actual_tokens > estimated_tokens * 1.2:
+                    logger.warning(
+                        f"Agent '{agent_name}' token estimate underestimated: "
+                        f"estimated={estimated_tokens}, actual={actual_tokens}"
+                    )
+    
+    def get_per_agent_summary(self) -> Dict[str, dict]:
+        """Get summary of token usage per agent."""
+        with self.lock:
+            summary = {}
+            for agent_name, tokens in self.per_agent_usage.items():
+                calls = self.per_agent_calls.get(agent_name, 1)
+                summary[agent_name] = {
+                    "total_tokens": tokens,
+                    "call_count": calls,
+                    "avg_tokens_per_call": tokens // max(1, calls),
+                }
+            return summary
+    
+    def get_analysis_metrics(self, analysis_id: str) -> Optional[Dict]:
+        """Get detailed metrics for a specific analysis."""
+        with self.lock:
+            return self.per_analysis_metrics.get(analysis_id)
+    
+    def log_analysis_summary(self, analysis_id: str):
+        """Log a detailed summary of an analysis."""
+        with self.lock:
+            metrics = self.per_analysis_metrics.get(analysis_id)
+            if not metrics:
+                return
+            
+            duration = (metrics.get("end_time") or time.time()) - metrics.get("start_time", time.time())
+            estimated = metrics.get("estimated_tokens", 0)
+            actual = metrics.get("actual_tokens", 0)
+            accuracy = 0
+            if estimated > 0:
+                accuracy = (actual / estimated) * 100
+            
+            logger.info(
+                f"Analysis {analysis_id} summary: "
+                f"Duration={duration:.1f}s, "
+                f"Estimated tokens={estimated}, Actual={actual} ({accuracy:.0f}% accuracy), "
+                f"Agents used={sorted(metrics.get('agents_used', set()))}"
+            )
     
     def reset(self):
         """Reset token counter (call once per minute in production)."""
