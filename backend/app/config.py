@@ -12,17 +12,15 @@ class Settings(BaseSettings):
     # ============================
     GROQ_API_KEY: str = Field(..., env="GROQ_API_KEY")
     
-    # Agent-specific models to distribute load across different Groq models
-    # This avoids rate limiting by using different TPM pools for each agent
-   
-    GROQ_CITATION_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_CITATION_MODEL")
-    GROQ_STRUCTURE_MODEL: str = Field("groq/llama-3.3-70b-versatile", env="GROQ_STRUCTURE_MODEL")
+    # Agent-specific models
+    GROQ_CITATION_MODEL: str = Field("groq/llama-3.3-70b-versatile", env="GROQ_CITATION_MODEL")
+    GROQ_STRUCTURE_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_STRUCTURE_MODEL") # Changed to 8b to avoid safety refusal
     GROQ_CONSISTENCY_MODEL: str = Field("groq/qwen/qwen3-32b", env="GROQ_CONSISTENCY_MODEL")
-    GROQ_PLAGIARISM_MODEL: str = Field("groq/meta-llama/llama-guard-4-12b", env="GROQ_PLAGIARISM_MODEL")
-    GROQ_PROOFREADER_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_PROOFREADER_MODEL")
+    GROQ_PLAGIARISM_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_PLAGIARISM_MODEL") # Changed to 8b to avoid Rate Limits
+    GROQ_PROOFREADER_MODEL: str = Field("groq/llama-3.3-70b-versatile", env="GROQ_PROOFREADER_MODEL")
     GROQ_VISION_MODEL: str = Field("groq/llama-3.2-11b-vision-preview", env="GROQ_VISION_MODEL")
 
-    # Make OpenAI Key Optional to avoid validation errors if empty
+    # Make OpenAI Key Optional
     OPENAI_API_KEY: Optional[str] = Field(None, env="OPENAI_API_KEY")
 
     # ============================
@@ -43,42 +41,26 @@ class Settings(BaseSettings):
     # ============================
     STORAGE_ROOT: str = Field("storage", env="STORAGE_ROOT")
     UPLOADS_DIR: str = Field("uploads", env="UPLOADS_DIR")
+    # ADDED: Configuration for Parquet storage
+    PARQUET_LOCAL_ROOT: str = Field("storage/parquet_data", env="PARQUET_LOCAL_ROOT")
 
     def _format_model(self, model: str) -> str:
-        """Ensure model string is formatted for CrewAI (groq/model-name)"""
         if model.startswith("groq/"):
             return model
         return f"groq/{model}"
 
     @property
-    def CREW_CITATION_MODEL(self):
-        """Returns citation agent model formatted for CrewAI"""
-        return self._format_model(self.GROQ_CITATION_MODEL)
-
+    def CREW_CITATION_MODEL(self): return self._format_model(self.GROQ_CITATION_MODEL)
     @property
-    def CREW_STRUCTURE_MODEL(self):
-        """Returns structure agent model formatted for CrewAI"""
-        return self._format_model(self.GROQ_STRUCTURE_MODEL)
-
+    def CREW_STRUCTURE_MODEL(self): return self._format_model(self.GROQ_STRUCTURE_MODEL)
     @property
-    def CREW_CONSISTENCY_MODEL(self):
-        """Returns consistency agent model formatted for CrewAI"""
-        return self._format_model(self.GROQ_CONSISTENCY_MODEL)
-
+    def CREW_CONSISTENCY_MODEL(self): return self._format_model(self.GROQ_CONSISTENCY_MODEL)
     @property
-    def CREW_PLAGIARISM_MODEL(self):
-        """Returns plagiarism agent model formatted for CrewAI"""
-        return self._format_model(self.GROQ_PLAGIARISM_MODEL)
-
+    def CREW_PLAGIARISM_MODEL(self): return self._format_model(self.GROQ_PLAGIARISM_MODEL)
     @property
-    def CREW_PROOFREADER_MODEL(self):
-        """Returns proofreader agent model formatted for CrewAI"""
-        return self._format_model(self.GROQ_PROOFREADER_MODEL)
-
+    def CREW_PROOFREADER_MODEL(self): return self._format_model(self.GROQ_PROOFREADER_MODEL)
     @property
-    def CREW_VISION_MODEL(self):
-        """Returns vision agent model formatted for CrewAI"""
-        return self._format_model(self.GROQ_VISION_MODEL)
+    def CREW_VISION_MODEL(self): return self._format_model(self.GROQ_VISION_MODEL)
 
     class Config:
         env_file = ".env"
