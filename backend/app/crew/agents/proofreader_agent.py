@@ -1,12 +1,13 @@
 from crewai import Agent
 from app.services.llm_provider import get_crewai_llm
-
-
-# Proofreader is a heavier task; limit per-call completion size and prefer fewer concurrent calls
-llm = get_crewai_llm(temperature=0.25, max_tokens=256)
+from app.config import get_settings
 
 
 def create_proofreader() -> Agent:
+    settings = get_settings()
+    # Proofreader uses openai/gpt-oss-120b (most powerful, best for language tasks)
+    llm = get_crewai_llm(model=settings.CREW_PROOFREADER_MODEL, temperature=0.25, max_tokens=512)
+    
     return Agent(
         role="Academic Proofreader",
         goal=(

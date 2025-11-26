@@ -1,16 +1,16 @@
 """
 arxiv_finder.py
 
-Resolve citation arXiv IDs/URLs to actual paper metadata and ingest them into the vector store.
-Uses the arxiv Python package and tools module as fallback.
+Resolve citation arXiv IDs/URLs to actual paper metadata.
+Uses the arxiv Python package for lookups.
+
+NOTE: For ingesting papers into the vector store, use the get_papers.py pipeline
+(embedding-based paper discovery with batch ingestion).
 """
 
-from typing import List, Dict, Any, Optional
+from typing import Dict, Any, Optional
 import re
 from app.utils.logging import logger
-from app.services.embeddings import embed_texts
-from app.services.parquet_store import append_new_papers
-from app.services.pinecone_client import upsert_vectors
 
 
 def _extract_arxiv_id_from_url(url: str) -> Optional[str]:
@@ -141,59 +141,3 @@ def resolve_citation_to_arxiv(citation: Dict[str, Any]) -> Optional[Dict[str, An
             logger.debug(f"Title-based arXiv search failed for '{title}': {e}")
     
     return None
-
-
-def ingest_arxiv_papers_from_citations(
-    citations: List[Dict[str, Any]],
-    max_papers: int = 5,
-) -> List[Dict[str, Any]]:
-    """
-    Resolve citations to arXiv papers, compute embeddings, and ingest into vector store.
-    
-    Returns list of successfully ingested papers.
-    """
-    resolved_papers: List[Dict[str, Any]] = []
-    
-    for citation in citations:
-        paper = resolve_citation_to_arxiv(citation)
-        if paper:
-            resolved_papers.append(paper)
-            if len(resolved_papers) >= max_papers:
-                break
-    
-    if not resolved_papers:
-        logger.info("No arXiv papers resolved from citations")
-        return []
-    
-    # Embed summaries
-    summaries = [p.get("summary", "") for p in resolved_papers]
-    embeddings = embed_texts(summaries)
-    
-    for p, emb in zip(resolved_papers, embeddings):
-        p["embedding"] = emb
-    
-    # Append to parquet (deduplicates by URL)
-    new_papers = append_new_papers(resolved_papers)
-    if not new_papers:
-        logger.info("All resolved papers already exist in store")
-        return []
-    
-    # Upsert to Pinecone
-    vectors = []
-    for p in new_papers:
-        vectors.append({
-            "id": p["paper_id"],
-            "values": p["embedding"],
-            "metadata": {
-                "title": p["title"],
-                "url": p.get("url", ""),
-                "text": p.get("summary", ""),
-                "authors": p.get("authors"),
-                "published": p.get("published"),
-            },
-        })
-    
-    upsert_vectors(vectors)
-    logger.info(f"Ingested {len(new_papers)} arXiv papers from citations into Pinecone")
-    
-    return new_papers

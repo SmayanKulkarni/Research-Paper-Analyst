@@ -1,12 +1,13 @@
 from crewai import Agent
 from app.services.llm_provider import get_crewai_llm
-
-
-# Consistency checks are mid-weight; reduce max_tokens to save TPM
-llm = get_crewai_llm(temperature=0.2, max_tokens=128)
+from app.config import get_settings
 
 
 def create_consistency_agent() -> Agent:
+    settings = get_settings()
+    # Consistency agent uses qwen/qwen3-32b (powerful for detailed analysis)
+    llm = get_crewai_llm(model=settings.CREW_CONSISTENCY_MODEL, temperature=0.2, max_tokens=256)
+    
     return Agent(
         role="Consistency and Coherence Checker",
         goal=(

@@ -150,6 +150,34 @@ def run_full_analysis(
     logger.info("Starting crew analysis pipeline...")
     result = crew.kickoff()
     
+    # Parse CrewAI task outputs into structured results
+    # CrewAI returns a TaskOutput object or string; we need to extract individual task outputs
+    structured_results = {}
+    
+    try:
+        # Try to get individual task outputs from the crew
+        # Each task has an output that we can map to analysis categories
+        if hasattr(crew, "tasks") and crew.tasks:
+            for task in crew.tasks:
+                if hasattr(task, "output") and task.output:
+                    output_value = str(task.output)
+                    if "proofreading" in task.description.lower():
+                        structured_results["proofreading"] = output_value
+                    elif "structure" in task.description.lower():
+                        structured_results["structure"] = output_value
+                    elif "citation" in task.description.lower():
+                        structured_results["citations"] = output_value
+                    elif "consistency" in task.description.lower():
+                        structured_results["consistency"] = output_value
+                    elif "plagiarism" in task.description.lower():
+                        structured_results["plagiarism"] = output_value
+    except Exception as e:
+        logger.debug(f"Could not extract individual task outputs: {e}")
+    
+    # If we couldn't parse individual outputs, treat the whole result as one output
+    if not structured_results:
+        structured_results["raw"] = str(result)
+    
     # OPTIMIZATION: Run vision task separately to avoid message length limits
     # Vision tasks don't need context from other tasks, only image paths
     vision_result = None
@@ -168,24 +196,13 @@ def run_full_analysis(
         
         try:
             vision_result = vision_crew.kickoff()
+            structured_results["vision"] = str(vision_result)
         except Exception as e:
             logger.warning(f"Vision analysis failed: {e}")
-            vision_result = None
+            structured_results["vision"] = None
 
     # Log token usage for monitoring
     tracker = get_token_tracker()
     logger.info(f"Analysis complete. Estimated tokens used: {tracker.tokens_used}/{tracker.safety_threshold}")
 
-    try:
-        # Merge vision results if available
-        if isinstance(result, str):
-            result_dict = json.loads(result)
-        else:
-            result_dict = result if isinstance(result, dict) else {"raw": str(result)}
-        
-        if vision_result:
-            result_dict["vision_analysis"] = vision_result
-        
-        return result_dict
-    except Exception:
-        return {"raw": str(result), "vision_analysis": vision_result if vision_result else None}
+    return structured_results

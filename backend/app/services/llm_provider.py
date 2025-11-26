@@ -22,12 +22,13 @@ response_cache = get_response_cache()
 _llm_call_semaphore = threading.Semaphore(getattr(settings, 'CREW_MAX_CONCURRENT_LLM_CALLS', 2))
 
 # Provide both a langchain ChatGroq for any LangChain consumers and a CrewAI factory
-# Generic Text LLM (LangChain wrapper) - OPTIMIZED: max_tokens reduced to 1024 for token efficiency
+# Generic Text LLM (LangChain wrapper) - Uses default citation model for backward compatibility
+# OPTIMIZED: max_tokens reduced to 1024 for token efficiency
 groq_llm = ChatGroq(
     api_key=settings.GROQ_API_KEY,
-    model_name=settings.CREW_TEXT_MODEL,
-    temperature=0.1,
-    max_tokens=1024,
+    model_name=settings.CREW_CITATION_MODEL,  # Default fallback model
+    temperature=0.3,
+    max_tokens=1600,
 )
 
 # Vision LLM (LangChain wrapper) - OPTIMIZED: max_tokens reduced to 500 for vision responses (very minimal summaries)
@@ -102,9 +103,9 @@ class CrewLLMWrapper:
                 try:
                     if CrewLLM is None:
                         raise RuntimeError("crewai.LLM is not available for compression downgrade")
-                    comp_model_name = settings.CREW_COMPRESSION_MODEL if hasattr(settings, 'CREW_COMPRESSION_MODEL') else None
+                    comp_model_name = settings.GROQ_CITATION_MODEL  # Use default citation model as fallback
                     logger.info(f"Downgrading LLM to compression model {comp_model_name} to avoid TPM overflow")
-                    raw_comp = CrewLLM(model=comp_model_name or settings.CREW_TEXT_MODEL, api_key=settings.GROQ_API_KEY, temperature=0.2)
+                    raw_comp = CrewLLM(model=comp_model_name, api_key=settings.GROQ_API_KEY, temperature=0.2)
                     # call compression model directly (with retries)
                     result = call_groq_with_retries(raw_comp.call, *args, **kwargs)
                     # account for lower token usage (heuristic)
@@ -115,9 +116,7 @@ class CrewLLMWrapper:
                         response_cache.set(prompt, result, model=getattr(raw_comp, 'model', 'compression'))
                     return result
                 except Exception:
-                    logger.exception("Compression downgrade failed; falling through to normal call and letting call_groq_with_retries handle any rate-limit")
-        
-        # Route the heavy call through our retry/backoff helper
+                    logger.exception("Compression downgrade failed; falling through to normal call and letting call_groq_with_retries handle any rate-limit")        # Route the heavy call through our retry/backoff helper
             # Respect a process-wide semaphore to limit concurrent LLM calls and avoid TPM spikes
             acquired = False
             try:
@@ -151,7 +150,7 @@ class CrewLLMWrapper:
 def get_crewai_llm(model: Optional[str] = None, temperature: float = 0.3, max_tokens: Optional[int] = None):
     """Return a configured CrewAI LLM instance using settings, wrapped with retry logic.
 
-    - model: optional full model string (e.g. 'groq/openai/gpt-oss-120b'). If omitted, uses settings.CREW_TEXT_MODEL
+    - model: optional full model string (e.g. 'groq/openai/gpt-oss-120b'). If omitted, uses settings.CREW_CITATION_MODEL (default)
     - temperature: LLM temperature
     - Note: we intentionally do NOT set max_tokens here to allow the underlying LLM to use defaults,
       but the CrewLLMWrapper will apply backoff-retry on 429 errors. Consider adding max_tokens param if needed.
@@ -159,7 +158,7 @@ def get_crewai_llm(model: Optional[str] = None, temperature: float = 0.3, max_to
     if CrewLLM is None:
         raise RuntimeError("crewai.LLM is not available in the environment")
 
-    model_name = model or settings.CREW_TEXT_MODEL
+    model_name = model or settings.CREW_CITATION_MODEL  # Default fallback model
     # Ensure model string is crew-prefixed if needed (Settings already provides CREW_* helpers)
     # Pass max_tokens where supported to bound large completions per-agent
     kwargs = dict(model=model_name, api_key=settings.GROQ_API_KEY, temperature=temperature)
@@ -172,13 +171,13 @@ def get_crewai_llm(model: Optional[str] = None, temperature: float = 0.3, max_to
 def get_crewai_compression_llm(temperature: float = 0.2):
     """Return a smaller, faster LLM optimized for compression tasks.
     
-    Uses llama-3-8b by default which is ~4x faster and uses fewer tokens than 70b variants.
+    Uses citation model by default which is lightweight and efficient.
     """
     if CrewLLM is None:
         raise RuntimeError("crewai.LLM is not available in the environment")
     
-    # Use CREW_COMPRESSION_MODEL property from settings (ensures groq/ prefix)
-    model_name = settings.CREW_COMPRESSION_MODEL if hasattr(settings, 'CREW_COMPRESSION_MODEL') else "groq/llama-3-8b-8192"
+    # Use citation model (lightweight) for compression tasks
+    model_name = settings.GROQ_CITATION_MODEL
     raw = CrewLLM(model=model_name, api_key=settings.GROQ_API_KEY, temperature=temperature)
     return CrewLLMWrapper(raw)
 

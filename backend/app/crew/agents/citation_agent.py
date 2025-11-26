@@ -1,12 +1,13 @@
 from crewai import Agent
 from app.services.llm_provider import get_crewai_llm
-
-
-# Citation checks can be shorter; constrain max_tokens to reduce token usage
-llm = get_crewai_llm(temperature=0.25, max_tokens=128)
+from app.config import get_settings
 
 
 def create_citation_agent() -> Agent:
+    settings = get_settings()
+    # Citation agent uses llama-3.1-8b-instant (lightweight, fast)
+    llm = get_crewai_llm(model=settings.CREW_CITATION_MODEL, temperature=0.25, max_tokens=256)
+    
     return Agent(
         role="Citation and Referencing Specialist",
         goal=(

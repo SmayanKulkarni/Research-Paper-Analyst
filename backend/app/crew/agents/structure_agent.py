@@ -1,12 +1,13 @@
 from crewai import Agent
 from app.services.llm_provider import get_crewai_llm
-
-
-# Structure analysis can be concise; reduce max_tokens
-llm = get_crewai_llm(temperature=0.2, max_tokens=128)
+from app.config import get_settings
 
 
 def create_structure_agent() -> Agent:
+    settings = get_settings()
+    # Structure agent uses openai/gpt-oss-20b (good balance of capability and cost)
+    llm = get_crewai_llm(model=settings.CREW_STRUCTURE_MODEL, temperature=0.2, max_tokens=256)
+    
     return Agent(
         role="Research Structure Analyst",
         goal=(

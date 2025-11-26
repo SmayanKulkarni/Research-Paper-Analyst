@@ -1,12 +1,14 @@
 from crewai import Agent
 from app.crew.tools.vision_tool import vision_tool
 from app.services.llm_provider import get_crewai_vision_llm
-
-
-llm = get_crewai_vision_llm(model="groq/meta-llama/llama-4-scout-17b-16e-instruct", temperature=0.1)
+from app.config import get_settings
 
 
 def create_vision_agent():
+    settings = get_settings()
+    # Vision agent uses its dedicated vision model
+    llm = get_crewai_vision_llm(model=settings.CREW_VISION_MODEL, temperature=0.1)
+    
     return Agent(
         role="Scientific Image Reviewer",
         backstory=(

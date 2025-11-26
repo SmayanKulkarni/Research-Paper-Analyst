@@ -14,6 +14,7 @@ class PlagiarismMatch(BaseModel):
     similarity: float
     source_excerpt: str
     user_excerpt: str
+    source_type: Optional[str] = None  # "indexed" or "arxiv_discovered"
 
 
 class VisionFigureAnalysis(BaseModel):
