@@ -14,12 +14,12 @@ class Settings(BaseSettings):
     
     # Agent-specific models to distribute load across different Groq models
     # This avoids rate limiting by using different TPM pools for each agent
-    # Format: groq/<model_name> for CrewAI/litellm integration
+   
     GROQ_CITATION_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_CITATION_MODEL")
     GROQ_STRUCTURE_MODEL: str = Field("groq/llama-3.3-70b-versatile", env="GROQ_STRUCTURE_MODEL")
     GROQ_CONSISTENCY_MODEL: str = Field("groq/qwen/qwen3-32b", env="GROQ_CONSISTENCY_MODEL")
-    GROQ_PLAGIARISM_MODEL: str = Field("groq/llama-3.3-70b-versatile", env="GROQ_PLAGIARISM_MODEL")
-    GROQ_PROOFREADER_MODEL: str = Field("groq/llama-3.3-70b-versatile", env="GROQ_PROOFREADER_MODEL")
+    GROQ_PLAGIARISM_MODEL: str = Field("groq/meta-llama/llama-guard-4-12b", env="GROQ_PLAGIARISM_MODEL")
+    GROQ_PROOFREADER_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_PROOFREADER_MODEL")
     GROQ_VISION_MODEL: str = Field("groq/llama-3.2-11b-vision-preview", env="GROQ_VISION_MODEL")
 
     # Make OpenAI Key Optional to avoid validation errors if empty

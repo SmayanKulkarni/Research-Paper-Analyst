@@ -18,11 +18,19 @@ from app.crew.tasks.plagiarism_task import create_plagiarism_task
 from app.crew.tools.pdf_tool import load_pdf
 from app.utils.logging import logger
 
+# backend/app/crew/orchestrator.py
+from crewai import Crew, Process
+from app.config import get_settings
+# ... [Keep all your imports] ...
+from app.crew.tools.pdf_tool import load_pdf
+from app.utils.logging import logger
+
 settings = get_settings()
 
-
 def run_full_analysis(
-    file_id: str,
+    file_id: str = None,           # Made optional
+    text: str = None,              # Added argument
+    images: list = None,           # Added argument
     enable_plagiarism: bool = True,
     enable_vision: bool = True,
     enable_citation: bool = True,
@@ -31,21 +39,30 @@ def run_full_analysis(
     Run full multi-agent paper analysis pipeline.
     
     Args:
-        file_id: UUID of uploaded PDF file
+        file_id: UUID of uploaded PDF file (optional if text is provided)
+        text: Full text of the paper (optional, overrides file_id)
+        images: List of image paths (optional)
         enable_plagiarism: Run plagiarism check
         enable_vision: Run vision analysis (requires images)
         enable_citation: Run citation analysis
-    
-    Returns:
-        Dict with structured analysis results from each agent
     """
-    pdf_data = load_pdf(file_id)
-    text = pdf_data["text"]
-    images = pdf_data["images"]
+    
+    # Handle input source: either file_id or direct text
+    if text is None:
+        if file_id is None:
+            raise ValueError("Either file_id or text must be provided")
+        pdf_data = load_pdf(file_id)
+        text = pdf_data["text"]
+        images = pdf_data["images"]
+    else:
+        # Default images to empty list if not provided
+        if images is None:
+            images = []
 
-    logger.info(f"Starting crew analysis for file {file_id}")
+    log_label = file_id if file_id else "direct_input"
+    logger.info(f"Starting crew analysis for {log_label}")
 
-    # Create all agents and tasks
+    # Create all agents
     proof = create_proofreader()
     struct = create_structure_agent()
     consist = create_consistency_agent()
@@ -65,7 +82,7 @@ def run_full_analysis(
     if plag:
         tasks.append(create_plagiarism_task(plag, text))
 
-    # Gather agents
+    # Gather active agents
     agents = [a for a in [proof, struct, cite, consist, plag] if a is not None]
 
     # Run main crew analysis
@@ -87,20 +104,22 @@ def run_full_analysis(
     # Parse structured results
     structured_results = {}
 
+    # Extract outputs safely
     try:
         if hasattr(crew, "tasks") and crew.tasks:
             for task in crew.tasks:
                 if hasattr(task, "output") and task.output:
                     output_value = str(task.output)
-                    if "proofreading" in task.description.lower():
+                    desc = task.description.lower()
+                    if "proofreading" in desc:
                         structured_results["proofreading"] = output_value
-                    elif "structure" in task.description.lower():
+                    elif "structure" in desc:
                         structured_results["structure"] = output_value
-                    elif "citation" in task.description.lower():
+                    elif "citation" in desc:
                         structured_results["citations"] = output_value
-                    elif "consistency" in task.description.lower():
+                    elif "consistency" in desc:
                         structured_results["consistency"] = output_value
-                    elif "plagiarism" in task.description.lower():
+                    elif "plagiarism" in desc:
                         structured_results["plagiarism"] = output_value
     except Exception as e:
         logger.debug(f"Could not extract individual task outputs: {e}")
