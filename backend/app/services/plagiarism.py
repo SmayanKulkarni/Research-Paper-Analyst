@@ -5,13 +5,6 @@ from app.services.pinecone_client import query_similar
 from app.models.schemas import PlagiarismMatch
 from app.utils.logging import logger
 
-# Optional: Use embedding-based paper discovery as fallback
-try:
-    from app.services.paper_discovery import find_related_papers_to_abstract
-    DISCOVERY_AVAILABLE = True
-except ImportError:
-    DISCOVERY_AVAILABLE = False
-
 
 def chunk_text(text: str, max_len: int = 800) -> List[str]:
     chunks: List[str] = []
@@ -80,73 +73,4 @@ def check_plagiarism(
                 )
             )
 
-    return results
-
-
-def check_plagiarism_with_discovery(
-    text: str,
-    max_matches_per_chunk: int = 3,
-    similarity_threshold: float = 0.85,
-    enable_discovery: bool = True,
-    discovery_top_k: int = 5,
-) -> List[PlagiarismMatch]:
-    """Check plagiarism with optional embedding-based paper discovery fallback.
-    
-    Pipeline:
-    1. Check Pinecone for indexed papers (citations + uploaded PDFs)
-    2. If no matches found and enable_discovery=True:
-       - Use embedding similarity to find related arXiv papers
-       - Add these as candidate sources for plagiarism
-    
-    Args:
-        text: Text to check
-        max_matches_per_chunk: Max matches per chunk
-        similarity_threshold: Min similarity score
-        enable_discovery: Whether to use paper discovery fallback
-        discovery_top_k: Max papers to discover as fallback
-    
-    Returns:
-        List of PlagiarismMatch results
-    """
-    # First try the normal Pinecone path
-    results = check_plagiarism(text, max_matches_per_chunk, similarity_threshold)
-    if results:
-        logger.info(f"Found {len(results)} plagiarism matches in Pinecone")
-        return results
-
-    # Fallback: Use embedding-based discovery to find related papers
-    if enable_discovery and DISCOVERY_AVAILABLE:
-        logger.info("No Pinecone matches found; using embedding-based discovery for related papers...")
-        try:
-            # Find related papers by abstract similarity
-            related_papers = find_related_papers_to_abstract(
-                abstract=text[:500],  # Use first 500 chars as abstract proxy
-                category="cs.CL",  # Default to NLP category
-                top_k=discovery_top_k,
-                max_candidates=100,
-            )
-            
-            if related_papers:
-                logger.info(f"Discovery found {len(related_papers)} potentially related papers")
-                
-                # Convert discovered papers to plagiarism matches
-                for paper in related_papers:
-                    results.append(
-                        PlagiarismMatch(
-                            source_id=paper.get("arxiv_id", paper.get("entry_id")),
-                            source_title=paper.get("title"),
-                            source_url=paper.get("pdf_url"),
-                            similarity=paper.get("similarity_score", 0.5),  # Use embedding similarity
-                            source_excerpt=paper.get("abstract", "")[:200],
-                            user_excerpt=text[:200],
-                            source_type="arxiv_discovered",  # Mark as discovered
-                        )
-                    )
-                
-                logger.info(f"Added {len(related_papers)} discovered papers as potential sources")
-        except Exception as e:
-            logger.debug(f"Discovery fallback failed: {e}; returning Pinecone results only")
-    else:
-        logger.info("No matches found; discovery fallback not available")
-    
     return results
