@@ -1,14 +1,18 @@
 from crewai import Task
 
-
 def create_citation_task(agent, text: str) -> Task:
-    # OPTIMIZED: Truncate text to first 3000 chars; ask for issues only, not full report
+    # UNLIMITED MODE: No truncation.
     return Task(
         description=(
-            "Identify top 5 citation issues (missing refs, uncredited claims) in this text. "
-            "Be concise—just list the issues and suggested fixes.\n\n"
-            f"{text[:3000]}"
+            "You are a Citation Auditor. Your goal is to verify specific claims.\n"
+            "INSTRUCTIONS:\n"
+            "1. Find sentences in the text that use citations (e.g., [1], (Smith, 2020)).\n"
+            "2. Extract the bibliography entry for that citation.\n"
+            "3. USE the 'Citation Integrity Checker' tool to verify if the real paper supports the claim.\n"
+            "4. Your output must be a list of: Claim -> Cited Paper -> Verdict (Supported/Unsupported).\n"
+            "5. If you cannot check a citation, mark it as 'Unverified'.\n\n"
+            f"TEXT CONTENT:\n{text}"
         ),
-        expected_output="A concise list of top 5 citation issues with fix suggestions.",
+        expected_output="A verification report of citations with Supported/Unsupported verdicts.",
         agent=agent,
     )

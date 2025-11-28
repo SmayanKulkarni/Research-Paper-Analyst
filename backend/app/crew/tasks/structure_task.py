@@ -1,14 +1,15 @@
 from crewai import Task
 
-
 def create_structure_task(agent, text: str) -> Task:
-    # OPTIMIZED: Truncate text and ask for summary of top issues only
+    # UNLIMITED MODE: No truncation.
     return Task(
         description=(
-            "Review the structure and logical flow. Point out top 3 structural issues "
-            "(missing sections, unclear transitions, reordering needs). Be concise.\n\n"
-            f"{text[:3000]}"
+            "Analyze the structure of this research paper against standard academic formats (IMRaD).\n"
+            "1. Is the abstract consistent with the conclusion?\n"
+            "2. Are the methods described in enough detail?\n"
+            "3. Does the flow of arguments make logical sense?\n\n"
+            f"{text}"
         ),
-        expected_output="A concise summary of top 3 structural issues with brief fix suggestions.",
+        expected_output="A brief report on structural integrity and flow issues.",
         agent=agent,
     )

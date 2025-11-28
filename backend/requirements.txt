@@ -1,42 +1,28 @@
-fastapi
-uvicorn[standard]
-pydantic
-python-multipart
-loguru
+fastapi==0.104.1
+uvicorn==0.24.0
+python-multipart==0.0.6
+pydantic==2.5.2
+pydantic-settings==2.1.0
+python-dotenv==1.0.0
+crewai==0.1.24
+langchain==0.0.350
+langchain-community==0.0.3
+langchain-groq==0.0.1
+duckduckgo-search==4.1.1
+pymupdf==1.23.8
 
-crewai
-crewai-tools
+Vector Database & Embeddings
 
-groq
-langchain-core
-langchain-groq
-LiteLLM
-sentence-transformers
-pinecone
+pinecone-client==3.0.0
+pinecone-text==0.8.0
+faiss-cpu==1.7.4
+sentence-transformers==2.2.2
+numpy==1.26.2
+pandas==2.1.3
+pyarrow==14.0.1
+arxiv==2.1.0
+PyPDF2==3.0.1
+requests==2.31.0
 
-pymupdf
-pypdf
-
-beautifulsoup4
-httpx
-tenacity
-
-# arxiv integration (for cited paper extraction)
-arxiv
-
-# NLP preprocessing (abstractive summarization, key-phrase extraction, entity recognition)
-transformers
-spacy
-keybert
-torch
-
-# token counting
-tiktoken
-
-pandas
-pyarrow
-fsspec
-adlfs
-
-# optional improvements
-tqdm
+pymupdf4llm>=0.0.1
+semanticscholar>=0.6.0

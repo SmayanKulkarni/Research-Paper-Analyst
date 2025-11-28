@@ -7,7 +7,7 @@ from app.config import get_settings
 def create_plagiarism_agent() -> Agent:
     settings = get_settings()
     # Plagiarism agent uses llama-3.3-70b-versatile (powerful for complex analysis)
-    llm = get_crewai_llm(model=settings.CREW_PLAGIARISM_MODEL, temperature=0.5, max_tokens=256)
+    llm = get_crewai_llm(model=settings.CREW_PLAGIARISM_MODEL, temperature=0.5, max_tokens=1000)
     
     return Agent(
         role="Plagiarism and Similarity Analyst",

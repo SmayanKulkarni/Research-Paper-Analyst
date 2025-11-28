@@ -6,7 +6,7 @@ from app.config import get_settings
 def create_proofreader() -> Agent:
     settings = get_settings()
     # Proofreader uses openai/gpt-oss-120b (most powerful, best for language tasks)
-    llm = get_crewai_llm(model=settings.CREW_PROOFREADER_MODEL, temperature=0.25, max_tokens=512)
+    llm = get_crewai_llm(model=settings.CREW_PROOFREADER_MODEL, temperature=0.25, max_tokens=1000)
     
     return Agent(
         role="Academic Proofreader",
