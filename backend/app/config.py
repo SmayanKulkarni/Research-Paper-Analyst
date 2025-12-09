@@ -19,18 +19,17 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = Field(..., env="GROQ_API_KEY")
     
     # Default model: Groq Llama 3.1 8B (reliable, fast, and cheap)
-    # Using "groq/" prefix for LiteLLM routing (CrewAI uses LiteLLM internally)
-    # Note: openai/gpt-oss-20b returns empty on simple prompts - use llama for reliability
     GROQ_GPT_OSS_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_GPT_OSS_MODEL")
     # For vision, keep the Groq vision model
     GROQ_VISION_MODEL: str = Field("groq/llama-3.2-11b-vision-preview", env="GROQ_VISION_MODEL")
 
-    # Route all agents to llama model by default (can override via env)
+    # Per-agent model assignments
     GROQ_CITATION_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_CITATION_MODEL")
     GROQ_STRUCTURE_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_STRUCTURE_MODEL")
     GROQ_CONSISTENCY_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_CONSISTENCY_MODEL")
     GROQ_PLAGIARISM_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_PLAGIARISM_MODEL")
     GROQ_PROOFREADER_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_PROOFREADER_MODEL")
+    GROQ_MATH_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_MATH_MODEL")  # Math review agent
 
     # Make OpenAI Key Optional
     OPENAI_API_KEY: Optional[str] = Field(None, env="OPENAI_API_KEY")
@@ -58,36 +57,48 @@ class Settings(BaseSettings):
     PLAGIARISM_CHUNK_OVERLAP: int = Field(50, env="PLAGIARISM_CHUNK_OVERLAP")
 
     # ============================
-    # TOKEN & COST LIMITS (Budget ≈ ₹20 per run)
-    # Groq Dev Tier Pricing (very cheap):
-    # - Llama 3.1 8B: Input $0.05/M, Output $0.08/M
-    # - Llama 3.2 11B Vision: Input $0.07/M, Output $0.07/M
-    # With ₹20 (~$0.24), we can afford ~3M tokens easily
+    # DYNAMIC TOKEN BUDGET (Accuracy-First Approach)
+    # Tokens are calculated based on actual PDF content length.
+    # Base budget: 200k tokens, expandable based on document complexity.
+    # 
+    # Strategy: Each agent gets tokens proportional to its task complexity:
+    # - Language Quality: Full paper text needed for thorough grammar/style review
+    # - Structure: Full paper for section analysis
+    # - Citation: Full paper to find and verify all citations
+    # - Plagiarism: Full paper for comprehensive originality check
+    # - Math Review: Only math sections (variable)
+    # - Vision: Based on number/complexity of images
+    # - Report: Aggregation of all outputs
     # ============================
-    MAX_COMPLETION_TOKENS: int = Field(1024, env="MAX_COMPLETION_TOKENS")
-    MAX_INPUT_TOKENS_HINT: int = Field(4000, env="MAX_INPUT_TOKENS_HINT")  # used for truncation heuristics
     
-    # Vision-specific token limits
-    MAX_VISION_TOKENS: int = Field(500, env="MAX_VISION_TOKENS")  # Per image analysis
-    MAX_IMAGES_TO_ANALYZE: int = Field(10, env="MAX_IMAGES_TO_ANALYZE")
+    # Maximum token budget (can expand for longer/complex papers)
+    MAX_TOKEN_BUDGET: int = Field(300000, env="MAX_TOKEN_BUDGET")
+    
+    # Minimum tokens per agent (ensures quality even for short papers)
+    MIN_TOKENS_PER_AGENT: int = Field(5000, env="MIN_TOKENS_PER_AGENT")
+    
+    # Output token limits - generous for detailed analysis
+    MAX_COMPLETION_TOKENS: int = Field(4096, env="MAX_COMPLETION_TOKENS")
+    
+    # Vision-specific settings
+    MAX_VISION_TOKENS: int = Field(2000, env="MAX_VISION_TOKENS")
+    MAX_IMAGES_TO_ANALYZE: int = Field(15, env="MAX_IMAGES_TO_ANALYZE")
+    
+    # Token estimation ratio (characters to tokens, roughly 4 chars = 1 token)
+    CHARS_PER_TOKEN: int = Field(4, env="CHARS_PER_TOKEN")
 
     # ============================
     # RATE LIMITING (Groq Free/Dev Tier)
-    # Groq has strict rate limits on free tier:
-    # - ~30 requests/minute for Llama 3.1 8B
-    # - ~6000 tokens/minute (TPM)
-    # Add delays between agent calls to avoid 429 errors
     # ============================
-    RATE_LIMIT_DELAY: float = Field(2.0, env="RATE_LIMIT_DELAY")  # Seconds between agent calls
-    MAX_RETRIES: int = Field(1, env="MAX_RETRIES")  # Minimal retries - fail fast
-    RETRY_DELAY: float = Field(5.0, env="RETRY_DELAY")  # Short delay on retry
+    RATE_LIMIT_DELAY: float = Field(2.0, env="RATE_LIMIT_DELAY")
+    MAX_RETRIES: int = Field(1, env="MAX_RETRIES")
+    RETRY_DELAY: float = Field(5.0, env="RETRY_DELAY")
 
     # ============================
     # LOCAL STORAGE
     # ============================
     STORAGE_ROOT: str = Field("storage", env="STORAGE_ROOT")
     UPLOADS_DIR: str = Field("uploads", env="UPLOADS_DIR")
-    # ADDED: Missing field for Parquet storage
     PARQUET_LOCAL_ROOT: str = Field("storage/parquet_data", env="PARQUET_LOCAL_ROOT")
 
     def _format_model(self, model: str) -> str:
@@ -115,6 +126,10 @@ class Settings(BaseSettings):
     @property
     def CREW_PROOFREADER_MODEL(self):
         return self._format_model(self.GROQ_PROOFREADER_MODEL)
+
+    @property
+    def CREW_MATH_MODEL(self):
+        return self._format_model(self.GROQ_MATH_MODEL)
 
     @property
     def CREW_VISION_MODEL(self):

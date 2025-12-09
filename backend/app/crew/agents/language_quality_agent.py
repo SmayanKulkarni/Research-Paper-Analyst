@@ -1,8 +1,8 @@
 """
-Language Quality Agent - Consolidated agent for grammar, clarity, tone, and consistency.
+Language Quality Agent - Comprehensive agent for grammar, clarity, tone, and consistency.
 
 This agent combines the responsibilities of the former Proofreader and Consistency agents
-to reduce the total number of agents and provide a more holistic language analysis.
+to provide a thorough, holistic language analysis.
 """
 
 from crewai import Agent
@@ -12,7 +12,7 @@ from app.config import get_settings
 
 def create_language_quality_agent(max_tokens: int = None) -> Agent:
     """
-    Create a consolidated Language Quality Agent.
+    Create a comprehensive Language Quality Agent.
     
     This agent handles:
     - Grammar and spelling errors
@@ -42,16 +42,20 @@ def create_language_quality_agent(max_tokens: int = None) -> Agent:
     return Agent(
         role="Academic Language & Consistency Specialist",
         goal=(
-            "Quickly analyze the paper for top 5 language issues. "
-            "Be concise and finish in one pass - no retries needed."
+            "Perform a THOROUGH analysis of the research paper's language quality. "
+            "Identify ALL grammar errors, clarity issues, style problems, and inconsistencies. "
+            "Accuracy and completeness are the priority - take your time to be thorough."
         ),
         backstory=(
-            "You are an efficient academic editor. You scan papers quickly, "
-            "identify the most important issues, and provide a concise report."
+            "You are a meticulous academic editor with decades of experience reviewing "
+            "research papers across multiple disciplines. You have an eagle eye for "
+            "grammatical errors, awkward phrasing, inconsistent terminology, and style issues. "
+            "You believe every paper deserves a thorough review to help authors produce "
+            "their best work. You don't rush - you methodically analyze each section."
         ),
         llm=llm,
         verbose=True,
         allow_delegation=False,
-        max_iter=1,  # Single pass analysis
-        max_retry_limit=0,  # No retries
+        max_iter=3,  # Allow multiple passes for thorough analysis
+        max_retry_limit=1,  # One retry on failure
     )

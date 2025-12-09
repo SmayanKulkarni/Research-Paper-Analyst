@@ -1,5 +1,5 @@
 """
-Language Quality Task - Quick grammar/clarity check.
+Language Quality Task - Comprehensive grammar, clarity, and style analysis.
 """
 
 from crewai import Task
@@ -7,24 +7,49 @@ from crewai import Task
 
 def create_language_quality_task(agent, text: str) -> Task:
     """
-    Quick language quality check - top 5 issues only.
+    Comprehensive language quality analysis - accuracy is the priority.
+    Analyzes the FULL paper text for thorough review.
     """
-    # Truncate to avoid token explosion
-    truncated_text = text[:25000] if len(text) > 25000 else text
-    
     return Task(
         description=(
-            "QUICK language review - find TOP 5 issues only.\n\n"
-            "Scan for:\n"
-            "1. Grammar errors (top 2)\n"
-            "2. Unclear passages (top 2)\n"
-            "3. Terminology inconsistencies (top 1)\n\n"
-            "Be BRIEF. One sentence per issue. Finish quickly.\n\n"
-            f"---PAPER (first {len(truncated_text)} chars)---\n"
-            f"{truncated_text}\n"
-            "---END---"
+            "Perform a COMPREHENSIVE language quality review of this research paper.\n\n"
+            "Analyze the ENTIRE document for:\n\n"
+            "## 1. Grammar & Syntax\n"
+            "- Subject-verb agreement errors\n"
+            "- Tense consistency issues\n"
+            "- Sentence fragments or run-ons\n"
+            "- Punctuation errors\n"
+            "- Article usage (a/an/the)\n\n"
+            "## 2. Clarity & Readability\n"
+            "- Ambiguous sentences or phrases\n"
+            "- Overly complex sentence structures\n"
+            "- Jargon that needs explanation\n"
+            "- Passive voice overuse\n"
+            "- Unclear pronoun references\n\n"
+            "## 3. Academic Style\n"
+            "- Consistency of terminology throughout\n"
+            "- Appropriate academic tone\n"
+            "- Proper use of hedging language\n"
+            "- Citation integration quality\n\n"
+            "## 4. Consistency Checks\n"
+            "- Spelling variations (British vs American)\n"
+            "- Acronym definitions and usage\n"
+            "- Number formatting consistency\n"
+            "- Capitalization patterns\n\n"
+            "For EACH issue found, provide:\n"
+            "- Location (section/paragraph if identifiable)\n"
+            "- The problematic text (quote it)\n"
+            "- What the problem is\n"
+            "- Suggested correction\n\n"
+            "Organize findings by severity: Critical → Major → Minor\n\n"
+            "---FULL PAPER TEXT---\n"
+            f"{text}\n"
+            "---END OF PAPER---"
         ),
-        expected_output="Brief list of top 5 language issues with locations.",
+        expected_output=(
+            "A detailed language quality report organized by category (Grammar, Clarity, Style, Consistency) "
+            "with specific issues, their locations, and suggested corrections. Include severity ratings."
+        ),
         agent=agent,
         context=None,
     )

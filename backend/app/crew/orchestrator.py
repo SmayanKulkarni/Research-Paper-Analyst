@@ -4,12 +4,13 @@ from typing import Dict, List, Optional, Any
 from crewai import Crew, Process
 
 from app.config import get_settings
-# Consolidated agents (reduced from 6 to 4 + vision)
+# Consolidated agents (reduced from 6 to 5 + vision)
 from app.crew.agents.language_quality_agent import create_language_quality_agent
 from app.crew.agents.structure_agent import create_structure_agent
 from app.crew.agents.citation_agent import create_citation_agent
 from app.crew.agents.plagiarism_agent import create_plagiarism_agent
 from app.crew.agents.vision_agent import create_vision_agent
+from app.crew.agents.math_agent import create_math_review_agent
 
 # Consolidated tasks
 from app.crew.tasks.language_quality_task import create_language_quality_task
@@ -17,6 +18,7 @@ from app.crew.tasks.structure_task import create_structure_task
 from app.crew.tasks.citation_task import create_citation_task
 from app.crew.tasks.plagiarism_task import create_plagiarism_task
 from app.crew.tasks.vision_task import create_vision_task
+from app.crew.tasks.math_task import create_math_review_task, detect_math_content, extract_math_content
 
 from app.crew.tools.pdf_tool import load_pdf
 from app.services.paper_discovery import PaperDiscoveryService
@@ -50,38 +52,121 @@ class AnalysisOrchestratorService:
     """
     Service responsible for orchestrating the CrewAI analysis pipeline.
     
-    OPTIMIZATIONS (v2):
-    - Consolidated 6 agents → 4+1 (Language Quality replaces Proofreader + Consistency)
-    - Each agent works INDEPENDENTLY on FULL paper (no sequential output dependencies)
-    - Dynamic token allocation based on paper length
-    - Vision agent receives ONLY images (no text)
+    ACCURACY-FIRST APPROACH (v4):
+    - Dynamic token allocation based on actual PDF content
+    - Each agent receives the full context it needs for thorough analysis
+    - No arbitrary token limits - agents use what they need
+    - Budget scales with document complexity (up to 300k tokens)
+    - Math Review agent only runs if paper has mathematical content
+    - Web search enabled for plagiarism detection
+    - Structured final report compilation
     """
     
     def __init__(self):
         self.settings = get_settings()
+        self.token_usage = {
+            "language_quality": 0,
+            "structure": 0,
+            "citation": 0,
+            "plagiarism": 0,
+            "math_review": 0,
+            "vision": 0,
+            "total_estimated": 0
+        }
     
-    def _calculate_dynamic_tokens(self, text_length: int, num_agents: int) -> int:
+    def _estimate_tokens(self, text: str) -> int:
+        """Estimate token count from text (roughly 4 chars = 1 token)."""
+        return len(text) // self.settings.CHARS_PER_TOKEN
+    
+    def _calculate_token_budget(self, text: str, num_images: int, has_math: bool) -> Dict[str, int]:
         """
-        Calculate dynamic token allocation per agent based on paper length.
+        Calculate token budget for each agent based on actual content.
         
         Strategy:
-        - Shorter papers: More tokens per agent for detailed analysis
-        - Longer papers: Balanced tokens to stay within budget
-        - Minimum 512 tokens, Maximum 2048 tokens per agent
+        - Base input: Full paper text tokens
+        - Output: Proportional to task complexity
+        - No artificial limits - accuracy is priority
         """
-        # Estimate input tokens (rough: 4 chars ≈ 1 token)
-        estimated_input_tokens = text_length // 4
+        text_tokens = self._estimate_tokens(text)
         
-        # Base output tokens from settings
-        base_tokens = self.settings.MAX_COMPLETION_TOKENS
+        # Log the paper stats
+        logger.info(f"📊 Paper Analysis:")
+        logger.info(f"   - Text length: {len(text):,} characters")
+        logger.info(f"   - Estimated tokens: {text_tokens:,}")
+        logger.info(f"   - Images: {num_images}")
+        logger.info(f"   - Has math content: {has_math}")
         
-        # If paper is short (< 10k tokens), allow more detailed output
-        if estimated_input_tokens < 10000:
-            return min(2048, base_tokens * 2)
+        # Calculate per-agent budgets
+        # Each agent needs: input (paper) + output (analysis)
+        # Output size scales with paper complexity
         
-        # For longer papers, use base allocation
-        # But ensure minimum useful output
-        return max(512, base_tokens)
+        base_output = self.settings.MAX_COMPLETION_TOKENS  # 4096
+        
+        # Language Quality: Needs full text, produces detailed feedback
+        # Output scales with paper length (more text = more potential issues)
+        lang_output = min(base_output * 2, max(base_output, text_tokens // 10))
+        
+        # Structure: Needs full text for section analysis
+        struct_output = base_output
+        
+        # Citation: Needs full text to find all citations
+        # More citations in longer papers = more output
+        cite_output = min(base_output * 2, max(base_output, text_tokens // 15))
+        
+        # Plagiarism: Needs full text for comprehensive check
+        plag_output = base_output
+        
+        # Math: Only if detected, needs extracted math sections
+        math_output = base_output if has_math else 0
+        
+        # Vision: Based on number of images
+        vision_output = min(num_images * 500, self.settings.MAX_VISION_TOKENS * num_images // 5) if num_images > 0 else 0
+        
+        budget = {
+            "language_quality": {
+                "input": text_tokens,
+                "output": lang_output,
+                "total": text_tokens + lang_output
+            },
+            "structure": {
+                "input": text_tokens,
+                "output": struct_output,
+                "total": text_tokens + struct_output
+            },
+            "citation": {
+                "input": text_tokens,
+                "output": cite_output,
+                "total": text_tokens + cite_output
+            },
+            "plagiarism": {
+                "input": text_tokens,
+                "output": plag_output,
+                "total": text_tokens + plag_output
+            },
+            "math_review": {
+                "input": text_tokens // 3 if has_math else 0,  # Math sections ~1/3 of paper max
+                "output": math_output,
+                "total": (text_tokens // 3 + math_output) if has_math else 0
+            },
+            "vision": {
+                "input": num_images * 1000,  # ~1k tokens per image
+                "output": vision_output,
+                "total": num_images * 1000 + vision_output
+            }
+        }
+        
+        # Calculate total
+        total = sum(b["total"] for b in budget.values())
+        budget["total_estimated"] = total
+        
+        logger.info(f"📈 Token Budget Allocation:")
+        for agent, alloc in budget.items():
+            if isinstance(alloc, dict):
+                logger.info(f"   - {agent}: {alloc['total']:,} tokens (in: {alloc['input']:,}, out: {alloc['output']:,})")
+            else:
+                logger.info(f"   - {agent}: {alloc:,} tokens")
+        
+        return budget
     
     def _extract_section_headings(self, text: str) -> str:
         """
@@ -175,40 +260,51 @@ class AnalysisOrchestratorService:
                 logger.error(f"Paper Discovery failed (continuing with analysis): {e}")
 
         # ---------------------------------------------------------
-        # OPTIMIZED Agent Analysis Pipeline
+        # ACCURACY-FIRST Agent Analysis Pipeline
         # Each agent works INDEPENDENTLY on the FULL paper
+        # No text truncation - agents see everything
         # ---------------------------------------------------------
         
         full_text = text
         text_length = len(full_text)
+        num_images = len(images) if images else 0
         
-        # Calculate dynamic tokens based on paper length
-        # Count active agents: language_quality + structure + citation? + plagiarism?
-        num_agents = 2 + (1 if enable_citation else 0) + (1 if enable_plagiarism else 0)
-        dynamic_tokens = self._calculate_dynamic_tokens(text_length, num_agents)
+        # Detect math content early for budget calculation
+        has_math = detect_math_content(full_text)
         
-        logger.info(f"Paper length: {text_length} chars, Dynamic tokens per agent: {dynamic_tokens}")
+        # Calculate dynamic token budget based on actual content
+        token_budget = self._calculate_token_budget(full_text, num_images, has_math)
+        self.token_usage["total_estimated"] = token_budget["total_estimated"]
         
-        # Extract section headings for structure analysis (reduces token usage)
+        logger.info(f"🎯 Total estimated token usage: {token_budget['total_estimated']:,} tokens")
+        
+        # Extract section headings for structure analysis (supplementary, not replacement)
         section_headings = self._extract_section_headings(full_text)
 
         # ---------------------------------------------------------
-        # Create Consolidated Agents (4 instead of 6)
+        # Create Agents with Dynamic Token Allocation
+        # Each agent gets tokens based on its specific needs
         # ---------------------------------------------------------
-        language_agent = create_language_quality_agent(max_tokens=dynamic_tokens)
-        structure_agent = create_structure_agent(max_tokens=dynamic_tokens)
-        citation_agent = create_citation_agent(max_tokens=dynamic_tokens) if enable_citation else None
-        plagiarism_agent = create_plagiarism_agent(max_tokens=dynamic_tokens) if enable_plagiarism else None
+        lang_tokens = token_budget["language_quality"]["output"]
+        struct_tokens = token_budget["structure"]["output"]
+        cite_tokens = token_budget["citation"]["output"]
+        plag_tokens = token_budget["plagiarism"]["output"]
+        
+        language_agent = create_language_quality_agent(max_tokens=lang_tokens)
+        structure_agent = create_structure_agent(max_tokens=struct_tokens)
+        citation_agent = create_citation_agent(max_tokens=cite_tokens) if enable_citation else None
+        plagiarism_agent = create_plagiarism_agent(max_tokens=plag_tokens) if enable_plagiarism else None
 
         # ---------------------------------------------------------
         # Run Tasks INDIVIDUALLY with rate limiting
         # This avoids hitting Groq's strict rate limits
         # ---------------------------------------------------------
         structured_results = {}
+        structured_results["token_budget"] = token_budget  # Include budget info in results
         rate_limit_delay = self.settings.RATE_LIMIT_DELAY
         
-        # Task 1: Language Quality
-        logger.info("Running Language Quality analysis...")
+        # Task 1: Language Quality (FULL paper text - no truncation)
+        logger.info(f"🔍 Running Language Quality analysis (budget: {lang_tokens:,} output tokens)...")
         try:
             lang_crew = Crew(
                 agents=[language_agent],
@@ -232,12 +328,12 @@ class AnalysisOrchestratorService:
         logger.info(f"Waiting {rate_limit_delay}s for rate limit...")
         time.sleep(rate_limit_delay)
         
-        # Task 2: Structure
-        logger.info("Running Structure analysis...")
+        # Task 2: Structure (FULL paper text + headings for reference)
+        logger.info(f"🔍 Running Structure analysis (budget: {struct_tokens:,} output tokens)...")
         try:
             struct_crew = Crew(
                 agents=[structure_agent],
-                tasks=[create_structure_task(structure_agent, section_headings)],
+                tasks=[create_structure_task(structure_agent, full_text, section_headings)],
                 process=Process.sequential,
                 verbose=True,
                 memory=False,
@@ -256,9 +352,9 @@ class AnalysisOrchestratorService:
         # Rate limit delay
         time.sleep(rate_limit_delay)
         
-        # Task 3: Citation (if enabled)
+        # Task 3: Citation (if enabled) - FULL paper text
         if citation_agent:
-            logger.info("Running Citation analysis...")
+            logger.info(f"🔍 Running Citation analysis (budget: {cite_tokens:,} output tokens)...")
             try:
                 cite_crew = Crew(
                     agents=[citation_agent],
@@ -280,9 +376,9 @@ class AnalysisOrchestratorService:
             
             time.sleep(rate_limit_delay)
         
-        # Task 4: Plagiarism (if enabled)
+        # Task 4: Plagiarism (if enabled) - FULL paper with web search
         if plagiarism_agent:
-            logger.info("Running Plagiarism analysis...")
+            logger.info(f"🔍 Running Plagiarism analysis with web search (budget: {plag_tokens:,} output tokens)...")
             try:
                 plag_crew = Crew(
                     agents=[plagiarism_agent],
@@ -301,6 +397,41 @@ class AnalysisOrchestratorService:
             except Exception as e:
                 logger.error(f"Plagiarism analysis failed: {e}")
                 structured_results["plagiarism"] = f"Analysis failed: {str(e)[:100]}"
+            
+            time.sleep(rate_limit_delay)
+        
+        # Task 5: Math Review (only if paper has mathematical content)
+        # Note: has_math was already calculated during budget calculation
+        if has_math:
+            math_tokens = token_budget["math_review"]["output"]
+            logger.info(f"🔍 Mathematical content detected. Running Math Review (budget: {math_tokens:,} output tokens)...")
+            try:
+                math_content = extract_math_content(full_text)
+                math_agent = create_math_review_agent()
+                math_task = create_math_review_task(math_agent, math_content)
+                
+                math_crew = Crew(
+                    agents=[math_agent],
+                    tasks=[math_task],
+                    process=Process.sequential,
+                    verbose=True,
+                    memory=False,
+                )
+                math_result = run_with_retry(
+                    math_crew.kickoff,
+                    max_retries=self.settings.MAX_RETRIES,
+                    retry_delay=self.settings.RETRY_DELAY
+                )
+                structured_results["math_review"] = str(math_result)
+                logger.info("✅ Math Review analysis complete")
+            except Exception as e:
+                logger.error(f"Math Review analysis failed: {e}")
+                structured_results["math_review"] = f"Analysis failed: {str(e)[:100]}"
+            
+            time.sleep(rate_limit_delay)
+        else:
+            logger.info("No significant mathematical content detected. Skipping Math Review.")
+            structured_results["math_review"] = None
 
         # ---------------------------------------------------------
         # Run Vision Analysis (Separate Crew - IMAGES ONLY)
@@ -333,8 +464,108 @@ class AnalysisOrchestratorService:
         else:
             structured_results["vision"] = None
 
+        # ---------------------------------------------------------
+        # Generate Structured Final Report
+        # ---------------------------------------------------------
+        logger.info("Generating structured final report...")
+        final_report = self._compile_final_report(structured_results)
+        structured_results["final_report"] = final_report
+        
         logger.info("🎉 All analysis complete!")
         return structured_results
+    
+    def _compile_final_report(self, results: Dict[str, Any]) -> str:
+        """
+        Compile all agent outputs into a well-structured final report.
+        
+        This creates a comprehensive analysis document that synthesizes
+        findings from all agents into a coherent paper review.
+        """
+        sections = []
+        
+        # Title
+        sections.append("# Research Paper Analysis Report\n")
+        sections.append("---\n")
+        
+        # Executive Summary
+        sections.append("## Executive Summary\n")
+        summary_points = []
+        
+        # Summarize each section's key finding
+        if results.get("language_quality") and "failed" not in results["language_quality"].lower():
+            summary_points.append("- **Language Quality**: Analysis completed")
+        if results.get("structure") and "failed" not in results["structure"].lower():
+            summary_points.append("- **Structure**: Analysis completed")
+        if results.get("citations") and "failed" not in results["citations"].lower():
+            summary_points.append("- **Citations**: Analysis completed")
+        if results.get("plagiarism") and "failed" not in results["plagiarism"].lower():
+            summary_points.append("- **Plagiarism**: Analysis completed")
+        if results.get("math_review") and "failed" not in str(results["math_review"]).lower():
+            summary_points.append("- **Mathematical Content**: Analysis completed")
+        if results.get("vision") and "failed" not in str(results["vision"]).lower():
+            summary_points.append("- **Visual Elements**: Analysis completed")
+        
+        if summary_points:
+            sections.append("\n".join(summary_points))
+        else:
+            sections.append("Analysis encountered issues. See individual sections for details.")
+        sections.append("\n\n---\n")
+        
+        # Language Quality Section
+        sections.append("## 1. Language Quality Analysis\n")
+        sections.append("*Grammar, clarity, style, and consistency review*\n\n")
+        if results.get("language_quality"):
+            sections.append(str(results["language_quality"]))
+        else:
+            sections.append("*Analysis not available*")
+        sections.append("\n\n---\n")
+        
+        # Structure Section
+        sections.append("## 2. Paper Structure Analysis\n")
+        sections.append("*Organization, section flow, and completeness*\n\n")
+        if results.get("structure"):
+            sections.append(str(results["structure"]))
+        else:
+            sections.append("*Analysis not available*")
+        sections.append("\n\n---\n")
+        
+        # Citation Section
+        sections.append("## 3. Citation Analysis\n")
+        sections.append("*Reference verification and citation quality*\n\n")
+        if results.get("citations"):
+            sections.append(str(results["citations"]))
+        else:
+            sections.append("*Citation analysis was not enabled or not available*")
+        sections.append("\n\n---\n")
+        
+        # Plagiarism Section
+        sections.append("## 4. Plagiarism Check\n")
+        sections.append("*Originality assessment via vector similarity and web search*\n\n")
+        if results.get("plagiarism"):
+            sections.append(str(results["plagiarism"]))
+        else:
+            sections.append("*Plagiarism analysis was not enabled or not available*")
+        sections.append("\n\n---\n")
+        
+        # Math Review Section (conditional)
+        if results.get("math_review"):
+            sections.append("## 5. Mathematical Content Review\n")
+            sections.append("*Equation correctness, proofs, and notation*\n\n")
+            sections.append(str(results["math_review"]))
+            sections.append("\n\n---\n")
+        
+        # Vision Section (conditional)
+        if results.get("vision"):
+            section_num = 6 if results.get("math_review") else 5
+            sections.append(f"## {section_num}. Visual Elements Analysis\n")
+            sections.append("*Figures, charts, and image quality assessment*\n\n")
+            sections.append(str(results["vision"]))
+            sections.append("\n\n---\n")
+        
+        # Footer
+        sections.append("\n*Report generated by Research Paper Analyst*\n")
+        
+        return "\n".join(sections)
 
 # Wrapper function to maintain backward compatibility with run_analysis.py
 def run_full_analysis(
@@ -345,6 +576,7 @@ def run_full_analysis(
     enable_plagiarism: bool = True,
     enable_vision: bool = True,
     enable_citation: bool = True,
+    enable_math: bool = True,  # Math review enabled by default (auto-detects if needed)
 ):
     service = AnalysisOrchestratorService()
     return service.run_analysis(

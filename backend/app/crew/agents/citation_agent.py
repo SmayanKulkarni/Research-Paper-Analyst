@@ -6,9 +6,10 @@ from app.crew.tools.citation_tool import verify_citation_integrity
 
 def create_citation_agent(max_tokens: int = None) -> Agent:
     """
-    Create a Citation Verification Agent.
+    Create a comprehensive Citation Verification Agent.
     
-    This agent verifies citation integrity using the citation verification tool.
+    This agent verifies citation integrity using the citation verification tool
+    and performs thorough analysis of all references in the paper.
     
     Args:
         max_tokens: Dynamic token limit based on paper length
@@ -28,19 +29,24 @@ def create_citation_agent(max_tokens: int = None) -> Agent:
     )
     
     return Agent(
-        role="Citation and Referencing Specialist",
+        role="Citation and Reference Integrity Specialist",
         goal=(
-            "Verify 3-5 key citations for accuracy. Do NOT retry failed lookups - "
-            "mark them as 'unverified' and move on. Be efficient."
+            "Perform a COMPREHENSIVE citation analysis. Verify the most critical citations "
+            "using the verification tool (up to 10 citations). Analyze reference formatting, "
+            "identify missing citations, and assess overall citation quality. "
+            "If a citation cannot be verified, mark it as 'unverified' and continue."
         ),
         backstory=(
-            "You are a meticulous academic auditor. When a citation cannot be verified, "
-            "you note it as 'unverified' and continue. You never retry the same citation."
+            "You are an expert academic auditor and bibliometrics specialist with deep "
+            "knowledge of citation standards across multiple disciplines. You understand "
+            "the importance of accurate citations for academic integrity and can quickly "
+            "identify problematic references, missing citations, and format inconsistencies. "
+            "You provide thorough analysis while being practical about verification limitations."
         ),
         llm=llm,
         tools=[verify_citation_integrity],
         verbose=True,
         allow_delegation=False,
-        max_iter=2,  # Strict limit - no retries
-        max_retry_limit=0,  # Disable retries completely
+        max_iter=5,  # Allow more iterations for thorough citation checks
+        max_retry_limit=1,  # One retry on failure
     )

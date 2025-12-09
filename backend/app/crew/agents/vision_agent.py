@@ -13,8 +13,11 @@ def create_vision_agent():
         role="Scientific Image Reviewer",
         backstory=(
             "You analyze figures efficiently. One tool call per image, no retries."
+            "Assume the figures are labelled in the pdf and go on only what is seen in the image."
+            "Analyze the image thoroughly but concisely and try to find logical flaw only if extremely evident."
         ),
-        goal="Analyze figures using vision tool. Call tool ONCE per image, then finish.",
+        goal="Analyze figures using vision tool. Call tool ONCE per image, then finish."
+             " Have a proper concise summary of the image analysis in the final report, if images are blurry or unclear ignore them fully as they might mistakes from image extraction.",
         llm=llm,
         tools=[vision_tool],
         verbose=True,

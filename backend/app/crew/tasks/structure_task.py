@@ -1,42 +1,68 @@
 from crewai import Task
 
 
-def create_structure_task(agent, section_headings: str) -> Task:
+def create_structure_task(agent, text: str, section_headings: str = None) -> Task:
     """
-    Create a structure analysis task that examines paper organization.
+    Create a comprehensive structure analysis task.
     
-    This task analyzes document organization using extracted section headings.
-    This approach reduces token usage while still providing meaningful structure analysis.
+    This task analyzes document organization using the FULL paper text
+    plus extracted section headings for quick reference.
     
     Args:
         agent: The structure analyst agent
-        section_headings: Extracted section headings from the paper
+        text: Full paper text for comprehensive analysis
+        section_headings: Optional extracted section headings for quick reference
     
     Returns:
         CrewAI Task for structure analysis
     """
+    headings_section = ""
+    if section_headings:
+        headings_section = f"\n**Quick Reference - Detected Headings:**\n{section_headings}\n"
+    
     return Task(
         description=(
-            "Analyze the STRUCTURE and ORGANIZATION of this research paper based on its section headings.\n\n"
-            "**Extracted Section Headings:**\n"
-            f"{section_headings}\n\n"
-            "Evaluate:\n"
-            "1. **Section Organization**: Are all expected sections present (Abstract, Introduction, "
-            "Related Work, Methods/Methodology, Results/Experiments, Discussion, Conclusion)?\n"
-            "2. **Logical Flow**: Does the order of sections follow a logical progression?\n"
-            "3. **Standard Compliance**: Does the structure follow academic paper conventions?\n"
-            "4. **Missing Sections**: Any crucial sections that appear to be missing?\n"
-            "5. **Redundant Sections**: Any sections that seem redundant or misplaced?\n\n"
-            "Provide a concise analysis with specific recommendations."
+            "Perform a COMPREHENSIVE STRUCTURE ANALYSIS of this research paper.\n\n"
+            f"{headings_section}\n"
+            "## Analysis Requirements:\n\n"
+            "### 1. Section Presence & Completeness\n"
+            "Check for all standard academic paper sections:\n"
+            "- Title and Abstract\n"
+            "- Introduction (problem statement, motivation, contributions)\n"
+            "- Related Work / Background / Literature Review\n"
+            "- Methodology / Methods / Approach\n"
+            "- Experiments / Evaluation / Results\n"
+            "- Discussion / Analysis\n"
+            "- Conclusion / Future Work\n"
+            "- References\n"
+            "- Appendices (if applicable)\n\n"
+            "### 2. Logical Flow Analysis\n"
+            "- Does the paper flow logically from problem → solution → evaluation?\n"
+            "- Are transitions between sections smooth?\n"
+            "- Is there a clear narrative thread throughout?\n\n"
+            "### 3. Section Quality Assessment\n"
+            "For each major section, assess:\n"
+            "- Is it appropriately sized (not too short/long)?\n"
+            "- Does it contain expected content?\n"
+            "- Is subsection organization appropriate?\n\n"
+            "### 4. Academic Convention Compliance\n"
+            "- Does structure follow field-specific conventions?\n"
+            "- Are figures/tables properly placed and referenced?\n"
+            "- Is the abstract properly structured (background, method, results, conclusion)?\n\n"
+            "### 5. Recommendations\n"
+            "Provide specific, actionable recommendations for improving structure.\n\n"
+            "---FULL PAPER TEXT---\n"
+            f"{text}\n"
+            "---END OF PAPER---"
         ),
         expected_output=(
-            "A structured report with:\n"
-            "- Overall structure assessment (Good/Needs Improvement/Poor)\n"
-            "- List of present sections\n"
-            "- List of missing or recommended sections\n"
-            "- Top 3-5 specific recommendations for structural improvement"
+            "A comprehensive structure analysis report including:\n"
+            "1. Section inventory (present/missing/incomplete)\n"
+            "2. Flow and coherence assessment\n"
+            "3. Section-by-section quality notes\n"
+            "4. Convention compliance score\n"
+            "5. Prioritized list of structural improvements"
         ),
         agent=agent,
-        # No context from other tasks - independent analysis
         context=None,
     )
