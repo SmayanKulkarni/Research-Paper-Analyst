@@ -27,12 +27,12 @@ def print_report(analysis_result: dict):
     print("FINAL RESEARCH PAPER ANALYSIS REPORT".center(80))
     print("="*80 + "\n")
 
-    # Updated sections to match consolidated agents
+    # Updated sections to match consolidated agents (no plagiarism)
     sections = [
         ("language_quality", "📝 LANGUAGE QUALITY (Grammar, Clarity, Consistency)"),
         ("structure", "🏗️  STRUCTURE & ORGANIZATION"),
-        ("citations", "📖 CITATION VERIFICATION"),
-        ("plagiarism", "🕵️  PLAGIARISM CHECK"),
+        ("citations", "📖 CITATION ANALYSIS"),
+        ("math_review", "🔢 MATHEMATICAL CONTENT REVIEW"),
         ("vision", "👁️  VISUAL ANALYSIS"),
     ]
 
@@ -96,7 +96,6 @@ def main():
         text=result["text"],
         pdf_path=pdf_path,  # Enable image extraction for vision analysis
         enable_vision=True,
-        enable_plagiarism=True,
         enable_citation=True,
     )
     

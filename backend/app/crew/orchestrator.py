@@ -4,19 +4,17 @@ from typing import Dict, List, Optional, Any
 from crewai import Crew, Process
 
 from app.config import get_settings
-# Consolidated agents (reduced from 6 to 5 + vision)
+# Consolidated agents (reduced from 6 to 4 + vision) - NO plagiarism
 from app.crew.agents.language_quality_agent import create_language_quality_agent
 from app.crew.agents.structure_agent import create_structure_agent
 from app.crew.agents.citation_agent import create_citation_agent
-from app.crew.agents.plagiarism_agent import create_plagiarism_agent
 from app.crew.agents.vision_agent import create_vision_agent
 from app.crew.agents.math_agent import create_math_review_agent
 
-# Consolidated tasks
+# Consolidated tasks - NO plagiarism
 from app.crew.tasks.language_quality_task import create_language_quality_task
 from app.crew.tasks.structure_task import create_structure_task
 from app.crew.tasks.citation_task import create_citation_task
-from app.crew.tasks.plagiarism_task import create_plagiarism_task
 from app.crew.tasks.vision_task import create_vision_task
 from app.crew.tasks.math_task import create_math_review_task, detect_math_content, extract_math_content
 
@@ -59,7 +57,6 @@ class AnalysisOrchestratorService:
     - No arbitrary token limits - agents use what they need
     - Budget scales with document complexity (up to 300k tokens)
     - Math Review agent only runs if paper has mathematical content
-    - Web search enabled for plagiarism detection
     - Structured final report compilation
     """
     
@@ -69,7 +66,6 @@ class AnalysisOrchestratorService:
             "language_quality": 0,
             "structure": 0,
             "citation": 0,
-            "plagiarism": 0,
             "math_review": 0,
             "vision": 0,
             "total_estimated": 0
@@ -114,9 +110,6 @@ class AnalysisOrchestratorService:
         # More citations in longer papers = more output
         cite_output = min(base_output * 2, max(base_output, text_tokens // 15))
         
-        # Plagiarism: Needs full text for comprehensive check
-        plag_output = base_output
-        
         # Math: Only if detected, needs extracted math sections
         math_output = base_output if has_math else 0
         
@@ -138,11 +131,6 @@ class AnalysisOrchestratorService:
                 "input": text_tokens,
                 "output": cite_output,
                 "total": text_tokens + cite_output
-            },
-            "plagiarism": {
-                "input": text_tokens,
-                "output": plag_output,
-                "total": text_tokens + plag_output
             },
             "math_review": {
                 "input": text_tokens // 3 if has_math else 0,  # Math sections ~1/3 of paper max
@@ -205,7 +193,6 @@ class AnalysisOrchestratorService:
         text: str = None,
         images: list = None,
         pdf_path: str = None,
-        enable_plagiarism: bool = True,
         enable_vision: bool = True,
         enable_citation: bool = True,
     ) -> Dict[str, Any]:
@@ -289,12 +276,10 @@ class AnalysisOrchestratorService:
         lang_tokens = token_budget["language_quality"]["output"]
         struct_tokens = token_budget["structure"]["output"]
         cite_tokens = token_budget["citation"]["output"]
-        plag_tokens = token_budget["plagiarism"]["output"]
         
         language_agent = create_language_quality_agent(max_tokens=lang_tokens)
         structure_agent = create_structure_agent(max_tokens=struct_tokens)
         citation_agent = create_citation_agent(max_tokens=cite_tokens) if enable_citation else None
-        plagiarism_agent = create_plagiarism_agent(max_tokens=plag_tokens) if enable_plagiarism else None
 
         # ---------------------------------------------------------
         # Run Tasks INDIVIDUALLY with rate limiting
@@ -377,31 +362,7 @@ class AnalysisOrchestratorService:
             
             time.sleep(rate_limit_delay)
         
-        # Task 4: Plagiarism (if enabled) - FULL paper with web search
-        if plagiarism_agent:
-            logger.info(f"🔍 Running Plagiarism analysis with web search (budget: {plag_tokens:,} output tokens)...")
-            try:
-                plag_crew = Crew(
-                    agents=[plagiarism_agent],
-                    tasks=[create_plagiarism_task(plagiarism_agent, full_text)],
-                    process=Process.sequential,
-                    verbose=True,
-                    memory=False,
-                )
-                plag_result = run_with_retry(
-                    plag_crew.kickoff,
-                    max_retries=self.settings.MAX_RETRIES,
-                    retry_delay=self.settings.RETRY_DELAY
-                )
-                structured_results["plagiarism"] = str(plag_result)
-                logger.info("✅ Plagiarism analysis complete")
-            except Exception as e:
-                logger.error(f"Plagiarism analysis failed: {e}")
-                structured_results["plagiarism"] = f"Analysis failed: {str(e)[:100]}"
-            
-            time.sleep(rate_limit_delay)
-        
-        # Task 5: Math Review (only if paper has mathematical content)
+        # Task 4: Math Review (only if paper has mathematical content)
         # Note: has_math was already calculated during budget calculation
         if has_math:
             math_tokens = token_budget["math_review"]["output"]
@@ -515,8 +476,6 @@ class AnalysisOrchestratorService:
             summary_points.append("- **Structure**: Analysis completed")
         if results.get("citations") and "failed" not in results["citations"].lower():
             summary_points.append("- **Citations**: Analysis completed")
-        if results.get("plagiarism") and "failed" not in results["plagiarism"].lower():
-            summary_points.append("- **Plagiarism**: Analysis completed")
         if results.get("math_review") and "failed" not in str(results["math_review"]).lower():
             summary_points.append("- **Mathematical Content**: Analysis completed")
         if results.get("vision") and "failed" not in str(results["vision"]).lower():
@@ -555,25 +514,16 @@ class AnalysisOrchestratorService:
             sections.append("*Citation analysis was not enabled or not available*")
         sections.append("\n\n---\n")
         
-        # Plagiarism Section
-        sections.append("## 4. Plagiarism Check\n")
-        sections.append("*Originality assessment via vector similarity and web search*\n\n")
-        if results.get("plagiarism"):
-            sections.append(str(results["plagiarism"]))
-        else:
-            sections.append("*Plagiarism analysis was not enabled or not available*")
-        sections.append("\n\n---\n")
-        
         # Math Review Section (conditional)
         if results.get("math_review"):
-            sections.append("## 5. Mathematical Content Review\n")
+            sections.append("## 4. Mathematical Content Review\n")
             sections.append("*Equation correctness, proofs, and notation*\n\n")
             sections.append(str(results["math_review"]))
             sections.append("\n\n---\n")
         
         # Vision Section (conditional)
         if results.get("vision"):
-            section_num = 6 if results.get("math_review") else 5
+            section_num = 5 if results.get("math_review") else 4
             sections.append(f"## {section_num}. Visual Elements Analysis\n")
             sections.append("*Figures, charts, and image quality assessment*\n\n")
             sections.append(str(results["vision"]))
@@ -590,7 +540,6 @@ def run_full_analysis(
     text: str = None,
     images: list = None,
     pdf_path: str = None,
-    enable_plagiarism: bool = True,
     enable_vision: bool = True,
     enable_citation: bool = True,
     enable_math: bool = True,  # Math review enabled by default (auto-detects if needed)
@@ -601,7 +550,6 @@ def run_full_analysis(
         text=text,
         images=images,
         pdf_path=pdf_path,
-        enable_plagiarism=enable_plagiarism,
         enable_vision=enable_vision,
         enable_citation=enable_citation
     )

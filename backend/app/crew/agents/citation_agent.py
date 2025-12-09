@@ -1,15 +1,20 @@
+"""
+Citation Agent - Checks citation-reference consistency within a paper.
+No external API calls - purely internal analysis.
+"""
+
 from crewai import Agent
 from app.services.llm_provider import get_crewai_llm
 from app.config import get_settings
-from app.crew.tools.citation_tool import verify_citation_integrity
+from app.crew.tools.citation_tool import check_citation_references
 
 
 def create_citation_agent(max_tokens: int = None) -> Agent:
     """
-    Create a comprehensive Citation Verification Agent.
+    Create a Citation Reference Consistency Agent.
     
-    This agent verifies citation integrity using the citation verification tool
-    and performs thorough analysis of all references in the paper.
+    This agent checks if all citations in the paper are properly referenced
+    and all references are actually cited in the content.
     
     Args:
         max_tokens: Dynamic token limit based on paper length
@@ -29,24 +34,22 @@ def create_citation_agent(max_tokens: int = None) -> Agent:
     )
     
     return Agent(
-        role="Citation and Reference Integrity Specialist",
+        role="Citation Reference Consistency Checker",
         goal=(
-            "Perform a COMPREHENSIVE citation analysis. Verify the most critical citations "
-            "using the verification tool (up to 10 citations). Analyze reference formatting, "
-            "identify missing citations, and assess overall citation quality. "
-            "If a citation cannot be verified, mark it as 'unverified' and continue."
+            "Check if all citations in the paper content (like [1], [2], etc.) have "
+            "corresponding entries in the References section, and if all references "
+            "are actually cited in the paper. Identify any mismatches or gaps."
         ),
         backstory=(
-            "You are an expert academic auditor and bibliometrics specialist with deep "
-            "knowledge of citation standards across multiple disciplines. You understand "
-            "the importance of accurate citations for academic integrity and can quickly "
-            "identify problematic references, missing citations, and format inconsistencies. "
-            "You provide thorough analysis while being practical about verification limitations."
+            "You are a meticulous academic editor who specializes in verifying that "
+            "papers have consistent citation-reference linking. You check that every "
+            "numbered citation in the text has a matching reference, and every reference "
+            "in the bibliography is actually used in the paper."
         ),
         llm=llm,
-        tools=[verify_citation_integrity],
+        tools=[check_citation_references],
         verbose=True,
         allow_delegation=False,
-        max_iter=5,  # Allow more iterations for thorough citation checks
-        max_retry_limit=1,  # One retry on failure
+        max_iter=2,
+        max_retry_limit=1,
     )

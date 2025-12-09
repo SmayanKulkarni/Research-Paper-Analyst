@@ -39,15 +39,3 @@ class CitationVerification(BaseModel):
 class CitationOutput(BaseModel):
     verifications: List[CitationVerification]
     general_comment: str
-
-class PlagiarismMatch(BaseModel):
-    similarity_score: float = Field(..., description="Score between 0.0 and 1.0")
-    source_title: str
-    source_url: str
-    suspicious_segment: str = Field(..., description="The text in the uploaded paper that triggered the match")
-
-class PlagiarismOutput(BaseModel):
-    plagiarism_detected: bool
-    max_similarity_score: float
-    matches: List[PlagiarismMatch]
-    assessment: str = Field(..., description="Final assessment: Safe, Suspicious, or High Risk")

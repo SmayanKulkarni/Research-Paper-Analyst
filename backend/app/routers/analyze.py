@@ -24,7 +24,6 @@ async def analyze(file_id: str):
     structure_output = None
     citations_output = None
     consistency_output = None
-    plagiarism_output = None
     vision_output = None
     pdf_report_path = None
 
@@ -44,8 +43,6 @@ async def analyze(file_id: str):
                     citations_output = value
                 elif "consistency" in key.lower():
                     consistency_output = value
-                elif "plagiarism" in key.lower():
-                    plagiarism_output = value
                 elif "vision" in key.lower():
                     vision_output = value
 
@@ -64,7 +61,6 @@ async def analyze(file_id: str):
             citations=citations_output or "No citation analysis available",
             consistency=consistency_output or "No consistency analysis available",
             vision=vision_output,
-            plagiarism=plagiarism_output,
             pdf_report_path=pdf_report_path,
         ).dict()
     )

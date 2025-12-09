@@ -7,16 +7,6 @@ class UploadResponse(BaseModel):
     filename: str
 
 
-class PlagiarismMatch(BaseModel):
-    source_id: str
-    source_title: Optional[str] = None
-    source_url: Optional[str] = None
-    similarity: float
-    source_excerpt: str
-    user_excerpt: str
-    source_type: Optional[str] = None  # "indexed" or "arxiv_discovered"
-
-
 class VisionFigureAnalysis(BaseModel):
     image_path: str
     ocr_text: str
@@ -29,5 +19,4 @@ class AnalysisResult(BaseModel):
     citations: str
     consistency: str
     vision: Optional[List[VisionFigureAnalysis]] = None
-    plagiarism: Optional[List[PlagiarismMatch]] = None
     pdf_report_path: Optional[str] = None
