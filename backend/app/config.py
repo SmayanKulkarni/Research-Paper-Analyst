@@ -1,6 +1,12 @@
 from functools import lru_cache
 from typing import Optional
-from pydantic_settings import BaseSettings
+
+# Support both Pydantic v1 (BaseSettings in pydantic) and v2 (pydantic-settings)
+try:  # Pydantic v2 style
+    from pydantic_settings import BaseSettings
+except Exception:  # Fallback to Pydantic v1
+    from pydantic import BaseSettings  # type: ignore
+
 from pydantic import Field
 
 
@@ -12,13 +18,19 @@ class Settings(BaseSettings):
     # ============================
     GROQ_API_KEY: str = Field(..., env="GROQ_API_KEY")
     
-    # Models - Using 70B for better context handling
-    GROQ_CITATION_MODEL: str = Field("groq/llama-3.3-70b-versatile", env="GROQ_CITATION_MODEL")
-    GROQ_STRUCTURE_MODEL: str = Field("groq/llama-3.3-70b-versatile", env="GROQ_STRUCTURE_MODEL")
-    GROQ_CONSISTENCY_MODEL: str = Field("groq/llama-3.3-70b-versatile", env="GROQ_CONSISTENCY_MODEL")
-    GROQ_PLAGIARISM_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_PLAGIARISM_MODEL") # Keep 8B for chunked tasks
-    GROQ_PROOFREADER_MODEL: str = Field("groq/llama-3.3-70b-versatile", env="GROQ_PROOFREADER_MODEL")
+    # Default model: Groq Llama 3.1 8B (reliable, fast, and cheap)
+    # Using "groq/" prefix for LiteLLM routing (CrewAI uses LiteLLM internally)
+    # Note: openai/gpt-oss-20b returns empty on simple prompts - use llama for reliability
+    GROQ_GPT_OSS_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_GPT_OSS_MODEL")
+    # For vision, keep the Groq vision model
     GROQ_VISION_MODEL: str = Field("groq/llama-3.2-11b-vision-preview", env="GROQ_VISION_MODEL")
+
+    # Route all agents to llama model by default (can override via env)
+    GROQ_CITATION_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_CITATION_MODEL")
+    GROQ_STRUCTURE_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_STRUCTURE_MODEL")
+    GROQ_CONSISTENCY_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_CONSISTENCY_MODEL")
+    GROQ_PLAGIARISM_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_PLAGIARISM_MODEL")
+    GROQ_PROOFREADER_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_PROOFREADER_MODEL")
 
     # Make OpenAI Key Optional
     OPENAI_API_KEY: Optional[str] = Field(None, env="OPENAI_API_KEY")
@@ -46,6 +58,31 @@ class Settings(BaseSettings):
     PLAGIARISM_CHUNK_OVERLAP: int = Field(50, env="PLAGIARISM_CHUNK_OVERLAP")
 
     # ============================
+    # TOKEN & COST LIMITS (Budget ≈ ₹20 per run)
+    # Groq Dev Tier Pricing (very cheap):
+    # - Llama 3.1 8B: Input $0.05/M, Output $0.08/M
+    # - Llama 3.2 11B Vision: Input $0.07/M, Output $0.07/M
+    # With ₹20 (~$0.24), we can afford ~3M tokens easily
+    # ============================
+    MAX_COMPLETION_TOKENS: int = Field(1024, env="MAX_COMPLETION_TOKENS")
+    MAX_INPUT_TOKENS_HINT: int = Field(4000, env="MAX_INPUT_TOKENS_HINT")  # used for truncation heuristics
+    
+    # Vision-specific token limits
+    MAX_VISION_TOKENS: int = Field(500, env="MAX_VISION_TOKENS")  # Per image analysis
+    MAX_IMAGES_TO_ANALYZE: int = Field(10, env="MAX_IMAGES_TO_ANALYZE")
+
+    # ============================
+    # RATE LIMITING (Groq Free/Dev Tier)
+    # Groq has strict rate limits on free tier:
+    # - ~30 requests/minute for Llama 3.1 8B
+    # - ~6000 tokens/minute (TPM)
+    # Add delays between agent calls to avoid 429 errors
+    # ============================
+    RATE_LIMIT_DELAY: float = Field(2.0, env="RATE_LIMIT_DELAY")  # Seconds between agent calls
+    MAX_RETRIES: int = Field(1, env="MAX_RETRIES")  # Minimal retries - fail fast
+    RETRY_DELAY: float = Field(5.0, env="RETRY_DELAY")  # Short delay on retry
+
+    # ============================
     # LOCAL STORAGE
     # ============================
     STORAGE_ROOT: str = Field("storage", env="STORAGE_ROOT")
@@ -55,9 +92,9 @@ class Settings(BaseSettings):
 
     def _format_model(self, model: str) -> str:
         """Ensure model string is formatted for CrewAI (groq/model-name)"""
-        if model.startswith("groq/"):
-            return model
-        return f"groq/{model}"
+        # Groq client accepts both "groq/..." and vendor-prefixed models like "openai/..."
+        # Keep as-is to allow "openai/gpt-oss-20b".
+        return model
 
     @property
     def CREW_CITATION_MODEL(self):

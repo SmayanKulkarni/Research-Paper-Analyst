@@ -12,9 +12,28 @@ settings = get_settings()
 class PlagiarismEngine:
     def __init__(self):
         logger.info("Initializing Plagiarism Engine (Hybrid + Cross-Encoder)...")
-        self.dense_model = SentenceTransformer(settings.EMBEDDING_MODEL_NAME)
-        self.cross_encoder = CrossEncoder(settings.CROSS_ENCODER_MODEL)
-        self.bm25 = BM25Encoder.default()
+        # Heavy models are loaded lazily to speed up import times.
+        self._dense_model = None
+        self._cross_encoder = None
+        self._bm25 = None
+
+    @property
+    def dense_model(self):
+        if self._dense_model is None:
+            self._dense_model = SentenceTransformer(settings.EMBEDDING_MODEL_NAME)
+        return self._dense_model
+
+    @property
+    def cross_encoder(self):
+        if self._cross_encoder is None:
+            self._cross_encoder = CrossEncoder(settings.CROSS_ENCODER_MODEL)
+        return self._cross_encoder
+
+    @property
+    def bm25(self):
+        if self._bm25 is None:
+            self._bm25 = BM25Encoder.default()
+        return self._bm25
 
     def _sliding_window(self, text: str, chunk_size: int = 250, overlap: int = 50) -> List[str]:
         """Split text into overlapping chunks of words."""
@@ -89,7 +108,15 @@ class PlagiarismEngine:
 
         return list(unique_sources.values())
 
-plagiarism_engine = PlagiarismEngine()
+_plagiarism_engine: PlagiarismEngine | None = None
+
+
+def _get_engine() -> PlagiarismEngine:
+    global _plagiarism_engine
+    if _plagiarism_engine is None:
+        _plagiarism_engine = PlagiarismEngine()
+    return _plagiarism_engine
+
 
 def check_plagiarism(text: str) -> List[Dict[str, Any]]:
-    return plagiarism_engine.check_document(text)   
+    return _get_engine().check_document(text)

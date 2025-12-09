@@ -1,56 +1,124 @@
 import os
+import time
 from typing import Dict, List, Optional, Any
 from crewai import Crew, Process
 
 from app.config import get_settings
-from app.crew.agents.proofreader_agent import create_proofreader
+# Consolidated agents (reduced from 6 to 4 + vision)
+from app.crew.agents.language_quality_agent import create_language_quality_agent
 from app.crew.agents.structure_agent import create_structure_agent
 from app.crew.agents.citation_agent import create_citation_agent
-from app.crew.agents.consistency_agent import create_consistency_agent
-from app.crew.agents.vision_agent import create_vision_agent
 from app.crew.agents.plagiarism_agent import create_plagiarism_agent
+from app.crew.agents.vision_agent import create_vision_agent
 
-from app.crew.tasks.proofreading_task import create_proofreading_task
+# Consolidated tasks
+from app.crew.tasks.language_quality_task import create_language_quality_task
 from app.crew.tasks.structure_task import create_structure_task
 from app.crew.tasks.citation_task import create_citation_task
-from app.crew.tasks.consistency_task import create_consistency_task
-from app.crew.tasks.vision_task import create_vision_task
 from app.crew.tasks.plagiarism_task import create_plagiarism_task
+from app.crew.tasks.vision_task import create_vision_task
 
 from app.crew.tools.pdf_tool import load_pdf
 from app.services.paper_discovery import PaperDiscoveryService
+from app.services.image_extractor import extract_images_from_pdf
 from app.utils.logging import logger
 
 settings = get_settings()
 
 
+def run_with_retry(func, *args, max_retries=1, retry_delay=5.0, **kwargs):
+    """
+    Run a function with minimal retry logic - fail fast approach.
+    Only retry once for rate limits, otherwise fail immediately.
+    """
+    for attempt in range(max_retries + 1):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            error_str = str(e).lower()
+            # Only retry on rate limit (429) errors
+            if ("429" in error_str or "rate" in error_str) and attempt < max_retries:
+                logger.warning(f"Rate limit hit. Waiting {retry_delay}s...")
+                time.sleep(retry_delay)
+            else:
+                # For all other errors (including empty responses), fail immediately
+                logger.error(f"Task failed: {str(e)[:100]}")
+                raise
+
+
 class AnalysisOrchestratorService:
     """
     Service responsible for orchestrating the CrewAI analysis pipeline.
+    
+    OPTIMIZATIONS (v2):
+    - Consolidated 6 agents → 4+1 (Language Quality replaces Proofreader + Consistency)
+    - Each agent works INDEPENDENTLY on FULL paper (no sequential output dependencies)
+    - Dynamic token allocation based on paper length
+    - Vision agent receives ONLY images (no text)
     """
     
     def __init__(self):
         self.settings = get_settings()
-        
-    def _truncate_text_for_8b_model(self, text: str, max_chars: int = 15000) -> str:
+    
+    def _calculate_dynamic_tokens(self, text_length: int, num_agents: int) -> int:
         """
-        Truncate text to avoid Rate Limits on smaller models (e.g., Llama 3.1 8B).
+        Calculate dynamic token allocation per agent based on paper length.
         
-        The Llama 3.1 8B Instant model on Groq Free/On-Demand often has a 6,000 TPM limit.
-        6,000 tokens ~= 24,000 characters. 
-        We use 15,000 chars to leave a very safe buffer for system prompts and output.
+        Strategy:
+        - Shorter papers: More tokens per agent for detailed analysis
+        - Longer papers: Balanced tokens to stay within budget
+        - Minimum 512 tokens, Maximum 2048 tokens per agent
         """
-        if len(text) <= max_chars:
-            return text
+        # Estimate input tokens (rough: 4 chars ≈ 1 token)
+        estimated_input_tokens = text_length // 4
         
-        logger.info(f"Truncating text from {len(text)} to {max_chars} chars for 8B model agents.")
-        return text[:max_chars] + "\n...[Text truncated due to API rate limits]..."
+        # Base output tokens from settings
+        base_tokens = self.settings.MAX_COMPLETION_TOKENS
+        
+        # If paper is short (< 10k tokens), allow more detailed output
+        if estimated_input_tokens < 10000:
+            return min(2048, base_tokens * 2)
+        
+        # For longer papers, use base allocation
+        # But ensure minimum useful output
+        return max(512, base_tokens)
+    
+    def _extract_section_headings(self, text: str) -> str:
+        """
+        Extract section headings from paper for structure analysis.
+        This allows structure agent to analyze organization without full text.
+        """
+        lines = text.split('\n')
+        headings = []
+        
+        # Common section keywords in research papers
+        section_keywords = [
+            'abstract', 'introduction', 'background', 'related work',
+            'methodology', 'methods', 'approach', 'experiments',
+            'results', 'discussion', 'conclusion', 'future work',
+            'references', 'appendix', 'acknowledgments'
+        ]
+        
+        for i, line in enumerate(lines):
+            line_lower = line.lower().strip()
+            # Check if line looks like a heading
+            if any(kw in line_lower for kw in section_keywords):
+                headings.append(f"Line {i+1}: {line.strip()}")
+            # Also check for numbered sections like "1. Introduction"
+            elif line.strip() and len(line.strip()) < 100:
+                if line.strip()[0].isdigit() or line.strip().isupper():
+                    headings.append(f"Line {i+1}: {line.strip()}")
+        
+        if headings:
+            return "\n".join(headings[:50])  # Limit to 50 headings
+        return "No clear section headings detected. Please analyze paper structure."
 
     def run_analysis(
         self,
         file_id: str = None,
         text: str = None,
         images: list = None,
+        pdf_path: str = None,
         enable_plagiarism: bool = True,
         enable_vision: bool = True,
         enable_citation: bool = True,
@@ -72,7 +140,24 @@ class AnalysisOrchestratorService:
         logger.info(f"Starting pipeline for {log_id}")
 
         # ---------------------------------------------------------
-        # NEW STEP: Paper Discovery & Knowledge Base Update
+        # Extract images from PDF for vision analysis
+        # ---------------------------------------------------------
+        if enable_vision and pdf_path and os.path.exists(pdf_path):
+            logger.info(f"Extracting top 10 largest images from PDF for vision analysis...")
+            try:
+                images = extract_images_from_pdf(
+                    pdf_path=pdf_path,
+                    max_images=10,
+                    min_width=100,
+                    min_height=100,
+                )
+                logger.info(f"Extracted {len(images)} significant images for analysis")
+            except Exception as e:
+                logger.warning(f"Image extraction failed: {e}")
+                images = []
+
+        # ---------------------------------------------------------
+        # Paper Discovery & Knowledge Base Update
         # ---------------------------------------------------------
         if file_id:
             try:
@@ -83,114 +168,172 @@ class AnalysisOrchestratorService:
                 if os.path.exists(pdf_path):
                     logger.info(f"Running Paper Discovery Service for {file_id}...")
                     discovery_service = PaperDiscoveryService()
-                    # This will find similar papers and save them to Parquet
                     discovery_service.find_similar_papers(pdf_path)
                 else:
                     logger.warning(f"PDF file not found at {pdf_path}, skipping discovery step.")
             except Exception as e:
-                # We catch exceptions here so discovery failure doesn't stop the main analysis
                 logger.error(f"Paper Discovery failed (continuing with analysis): {e}")
 
         # ---------------------------------------------------------
-        # Agent Analysis Pipeline
+        # OPTIMIZED Agent Analysis Pipeline
+        # Each agent works INDEPENDENTLY on the FULL paper
         # ---------------------------------------------------------
         
-        # 2. Prepare Text Versions
-        # Proofreader uses 70B model (higher limits), gets FULL text.
         full_text = text
+        text_length = len(full_text)
         
-        # Structure, Citation, Plagiarism use 8B model (strict 6k TPM limit), get TRUNCATED text.
-        safe_text_8b = self._truncate_text_for_8b_model(full_text)
+        # Calculate dynamic tokens based on paper length
+        # Count active agents: language_quality + structure + citation? + plagiarism?
+        num_agents = 2 + (1 if enable_citation else 0) + (1 if enable_plagiarism else 0)
+        dynamic_tokens = self._calculate_dynamic_tokens(text_length, num_agents)
+        
+        logger.info(f"Paper length: {text_length} chars, Dynamic tokens per agent: {dynamic_tokens}")
+        
+        # Extract section headings for structure analysis (reduces token usage)
+        section_headings = self._extract_section_headings(full_text)
 
-        # 3. Create Agents
-        proof = create_proofreader()
-        struct = create_structure_agent()
-        consist = create_consistency_agent()
-        cite = create_citation_agent() if enable_citation else None
-        plag = create_plagiarism_agent() if enable_plagiarism else None
+        # ---------------------------------------------------------
+        # Create Consolidated Agents (4 instead of 6)
+        # ---------------------------------------------------------
+        language_agent = create_language_quality_agent(max_tokens=dynamic_tokens)
+        structure_agent = create_structure_agent(max_tokens=dynamic_tokens)
+        citation_agent = create_citation_agent(max_tokens=dynamic_tokens) if enable_citation else None
+        plagiarism_agent = create_plagiarism_agent(max_tokens=dynamic_tokens) if enable_plagiarism else None
 
-        # 4. Create Tasks
-        # Note: We pass the safe_text_8b to agents liable to hit the 6k limit
-        tasks = [
-            create_proofreading_task(proof, full_text),       # 70B Model (Safe for large context)
-            create_structure_task(struct, safe_text_8b),      # 8B Model (Needs truncation)
-            create_consistency_task(consist, safe_text_8b),   # Qwen Model (Safe to truncate)
-        ]
-
-        if cite:
-            tasks.append(create_citation_task(cite, safe_text_8b)) # 8B Model
-
-        if plag:
-            tasks.append(create_plagiarism_task(plag, safe_text_8b)) # 8B Model
-
-        # 5. Gather Active Agents
-        agents = [a for a in [proof, struct, cite, consist, plag] if a is not None]
-
-        # 6. Run Main Crew
-        crew = Crew(
-            agents=agents,
-            tasks=tasks,
-            process=Process.sequential,
-            verbose=True,
-            memory=False,
-            embedder={
-                "provider": "huggingface",
-                "config": {"model": self.settings.EMBEDDING_MODEL_NAME},
-            },
-        )
-
-        logger.info("Running main analysis crew...")
-        result = crew.kickoff()
-
-        # 7. Parse Results
+        # ---------------------------------------------------------
+        # Run Tasks INDIVIDUALLY with rate limiting
+        # This avoids hitting Groq's strict rate limits
+        # ---------------------------------------------------------
         structured_results = {}
+        rate_limit_delay = self.settings.RATE_LIMIT_DELAY
         
+        # Task 1: Language Quality
+        logger.info("Running Language Quality analysis...")
         try:
-            if hasattr(crew, "tasks") and crew.tasks:
-                for task in crew.tasks:
-                    if hasattr(task, "output") and task.output:
-                        output_value = str(task.output)
-                        desc = task.description.lower()
-                        if "proofreading" in desc:
-                            structured_results["proofreading"] = output_value
-                        elif "structure" in desc:
-                            structured_results["structure"] = output_value
-                        elif "citation" in desc:
-                            structured_results["citations"] = output_value
-                        elif "consistency" in desc:
-                            structured_results["consistency"] = output_value
-                        elif "plagiarism" in desc:
-                            structured_results["plagiarism"] = output_value
-        except Exception as e:
-            logger.debug(f"Could not extract individual task outputs: {e}")
-
-        if not structured_results:
-            structured_results["raw"] = str(result)
-
-        # 8. Run Vision Analysis (Separate Crew)
-        if enable_vision and images:
-            logger.info("Running vision analysis on extracted images...")
-            vision = create_vision_agent()
-            vision_task = create_vision_task(vision, images)
-
-            vision_crew = Crew(
-                agents=[vision],
-                tasks=[vision_task],
+            lang_crew = Crew(
+                agents=[language_agent],
+                tasks=[create_language_quality_task(language_agent, full_text)],
                 process=Process.sequential,
                 verbose=True,
                 memory=False,
             )
-
+            lang_result = run_with_retry(
+                lang_crew.kickoff,
+                max_retries=self.settings.MAX_RETRIES,
+                retry_delay=self.settings.RETRY_DELAY
+            )
+            structured_results["language_quality"] = str(lang_result)
+            logger.info("✅ Language Quality analysis complete")
+        except Exception as e:
+            logger.error(f"Language Quality failed: {e}")
+            structured_results["language_quality"] = f"Analysis failed: {str(e)[:100]}"
+        
+        # Rate limit delay
+        logger.info(f"Waiting {rate_limit_delay}s for rate limit...")
+        time.sleep(rate_limit_delay)
+        
+        # Task 2: Structure
+        logger.info("Running Structure analysis...")
+        try:
+            struct_crew = Crew(
+                agents=[structure_agent],
+                tasks=[create_structure_task(structure_agent, section_headings)],
+                process=Process.sequential,
+                verbose=True,
+                memory=False,
+            )
+            struct_result = run_with_retry(
+                struct_crew.kickoff,
+                max_retries=self.settings.MAX_RETRIES,
+                retry_delay=self.settings.RETRY_DELAY
+            )
+            structured_results["structure"] = str(struct_result)
+            logger.info("✅ Structure analysis complete")
+        except Exception as e:
+            logger.error(f"Structure analysis failed: {e}")
+            structured_results["structure"] = f"Analysis failed: {str(e)[:100]}"
+        
+        # Rate limit delay
+        time.sleep(rate_limit_delay)
+        
+        # Task 3: Citation (if enabled)
+        if citation_agent:
+            logger.info("Running Citation analysis...")
             try:
-                vision_result = vision_crew.kickoff()
+                cite_crew = Crew(
+                    agents=[citation_agent],
+                    tasks=[create_citation_task(citation_agent, full_text)],
+                    process=Process.sequential,
+                    verbose=True,
+                    memory=False,
+                )
+                cite_result = run_with_retry(
+                    cite_crew.kickoff,
+                    max_retries=self.settings.MAX_RETRIES,
+                    retry_delay=self.settings.RETRY_DELAY
+                )
+                structured_results["citations"] = str(cite_result)
+                logger.info("✅ Citation analysis complete")
+            except Exception as e:
+                logger.error(f"Citation analysis failed: {e}")
+                structured_results["citations"] = f"Analysis failed: {str(e)[:100]}"
+            
+            time.sleep(rate_limit_delay)
+        
+        # Task 4: Plagiarism (if enabled)
+        if plagiarism_agent:
+            logger.info("Running Plagiarism analysis...")
+            try:
+                plag_crew = Crew(
+                    agents=[plagiarism_agent],
+                    tasks=[create_plagiarism_task(plagiarism_agent, full_text)],
+                    process=Process.sequential,
+                    verbose=True,
+                    memory=False,
+                )
+                plag_result = run_with_retry(
+                    plag_crew.kickoff,
+                    max_retries=self.settings.MAX_RETRIES,
+                    retry_delay=self.settings.RETRY_DELAY
+                )
+                structured_results["plagiarism"] = str(plag_result)
+                logger.info("✅ Plagiarism analysis complete")
+            except Exception as e:
+                logger.error(f"Plagiarism analysis failed: {e}")
+                structured_results["plagiarism"] = f"Analysis failed: {str(e)[:100]}"
+
+        # ---------------------------------------------------------
+        # Run Vision Analysis (Separate Crew - IMAGES ONLY)
+        # ---------------------------------------------------------
+        if enable_vision and images:
+            time.sleep(rate_limit_delay)
+            logger.info(f"Running vision analysis on {len(images)} images...")
+            try:
+                vision_agent = create_vision_agent()
+                vision_task = create_vision_task(vision_agent, images)
+
+                vision_crew = Crew(
+                    agents=[vision_agent],
+                    tasks=[vision_task],
+                    process=Process.sequential,
+                    verbose=True,
+                    memory=False,
+                )
+
+                vision_result = run_with_retry(
+                    vision_crew.kickoff,
+                    max_retries=self.settings.MAX_RETRIES,
+                    retry_delay=self.settings.RETRY_DELAY
+                )
                 structured_results["vision"] = str(vision_result)
+                logger.info("✅ Vision analysis complete")
             except Exception as e:
                 logger.warning(f"Vision analysis failed: {e}")
-                structured_results["vision"] = None
+                structured_results["vision"] = f"Analysis failed: {str(e)[:100]}"
         else:
             structured_results["vision"] = None
 
-        logger.info("Analysis complete")
+        logger.info("🎉 All analysis complete!")
         return structured_results
 
 # Wrapper function to maintain backward compatibility with run_analysis.py
@@ -198,6 +341,7 @@ def run_full_analysis(
     file_id: str = None,
     text: str = None,
     images: list = None,
+    pdf_path: str = None,
     enable_plagiarism: bool = True,
     enable_vision: bool = True,
     enable_citation: bool = True,
@@ -207,6 +351,7 @@ def run_full_analysis(
         file_id=file_id,
         text=text,
         images=images,
+        pdf_path=pdf_path,
         enable_plagiarism=enable_plagiarism,
         enable_vision=enable_vision,
         enable_citation=enable_citation

@@ -1,14 +1,22 @@
 from typing import Optional
+import os
+
+from crewai import LLM
 
 from app.config import get_settings
 from app.utils.logging import logger
 
-try:
-    from crewai import LLM as CrewLLM
-except ImportError:
-    CrewLLM = None
-
 settings = get_settings()
+
+# Set GROQ_API_KEY in environment for LiteLLM routing
+os.environ["GROQ_API_KEY"] = settings.GROQ_API_KEY
+
+
+def _ensure_groq_prefix(model: str) -> str:
+    """Ensure model has groq/ prefix for LiteLLM routing."""
+    if not model.startswith("groq/"):
+        return f"groq/{model}"
+    return model
 
 
 def get_crewai_llm(
@@ -16,19 +24,22 @@ def get_crewai_llm(
     temperature: float = 0.3,
     max_tokens: Optional[int] = None,
 ):
-    """Get a CrewAI LLM instance for agent tasks."""
-    if CrewLLM is None:
-        raise RuntimeError("CrewAI is not installed or LLM class not available")
-
+    """
+    Get a CrewAI LLM instance that routes to Groq via LiteLLM.
+    
+    Model names must have "groq/" prefix for LiteLLM routing.
+    Example: "groq/llama-3.1-8b-instant" routes to Groq's Llama model.
+    """
     if model is None:
-        model = settings.CREW_CITATION_MODEL
+        model = settings.GROQ_GPT_OSS_MODEL
+
+    model = _ensure_groq_prefix(model)
 
     if max_tokens is None:
-        max_tokens = 256
+        max_tokens = settings.MAX_COMPLETION_TOKENS
 
-    return CrewLLM(
+    return LLM(
         model=model,
-        api_key=settings.GROQ_API_KEY,
         temperature=temperature,
         max_tokens=max_tokens,
     )
@@ -37,17 +48,23 @@ def get_crewai_llm(
 def get_crewai_vision_llm(
     model: Optional[str] = None,
     temperature: float = 0.2,
+    max_tokens: Optional[int] = None,
 ):
-    """Get a CrewAI LLM instance for vision tasks."""
-    if CrewLLM is None:
-        raise RuntimeError("CrewAI is not installed or LLM class not available")
-
+    """
+    Get a CrewAI LLM instance for vision tasks.
+    
+    Uses Groq's native vision model via LiteLLM routing.
+    """
     if model is None:
-        model = settings.CREW_VISION_MODEL
+        model = settings.GROQ_VISION_MODEL
 
-    return CrewLLM(
+    model = _ensure_groq_prefix(model)
+    
+    if max_tokens is None:
+        max_tokens = settings.MAX_VISION_TOKENS
+
+    return LLM(
         model=model,
-        api_key=settings.GROQ_API_KEY,
         temperature=temperature,
-        max_tokens=500,
+        max_tokens=max_tokens,
     )

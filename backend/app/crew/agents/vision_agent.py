@@ -12,13 +12,12 @@ def create_vision_agent():
     return Agent(
         role="Scientific Image Reviewer",
         backstory=(
-            "You are skilled at interpreting scientific figures, charts, and diagrams "
-            "to assess their clarity, accuracy, and relevance."
+            "You analyze figures efficiently. One tool call per image, no retries."
         ),
-        goal="Analyze figures using a vision model. Be concise.",
+        goal="Analyze figures using vision tool. Call tool ONCE per image, then finish.",
         llm=llm,
         tools=[vision_tool],
         verbose=True,
-        # OPTIMIZATION: Limit max iterations to reduce token usage
-        max_iter=3,
+        max_iter=2,  # Limited iterations
+        max_retry_limit=0,  # No retries
     )
