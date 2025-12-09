@@ -30,3 +30,4 @@ class AnalysisResult(BaseModel):
     consistency: str
     vision: Optional[List[VisionFigureAnalysis]] = None
     plagiarism: Optional[List[PlagiarismMatch]] = None
+    pdf_report_path: Optional[str] = None

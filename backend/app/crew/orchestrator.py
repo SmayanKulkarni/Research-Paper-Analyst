@@ -23,6 +23,7 @@ from app.crew.tasks.math_task import create_math_review_task, detect_math_conten
 from app.crew.tools.pdf_tool import load_pdf
 from app.services.paper_discovery import PaperDiscoveryService
 from app.services.image_extractor import extract_images_from_pdf
+from app.services.pdf_report_generator import PDFReportGenerator
 from app.utils.logging import logger
 
 settings = get_settings()
@@ -470,6 +471,22 @@ class AnalysisOrchestratorService:
         logger.info("Generating structured final report...")
         final_report = self._compile_final_report(structured_results)
         structured_results["final_report"] = final_report
+        
+        # ---------------------------------------------------------
+        # Generate PDF Report
+        # ---------------------------------------------------------
+        logger.info("Generating PDF report...")
+        try:
+            pdf_generator = PDFReportGenerator()
+            pdf_path = pdf_generator.generate_report(
+                results=structured_results,
+                file_id=log_id
+            )
+            structured_results["pdf_report_path"] = pdf_path
+            logger.info(f"✅ PDF report saved to: {pdf_path}")
+        except Exception as e:
+            logger.error(f"PDF report generation failed: {e}")
+            structured_results["pdf_report_path"] = None
         
         logger.info("🎉 All analysis complete!")
         return structured_results
