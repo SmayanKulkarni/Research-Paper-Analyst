@@ -1,0 +1,11 @@
+.page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  z-index: 1; /* Above background orbs */
+}
+
+.main {
+  flex: 1;
+}

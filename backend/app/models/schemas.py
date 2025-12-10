@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Any
 from pydantic import BaseModel
 
 
@@ -14,9 +14,12 @@ class VisionFigureAnalysis(BaseModel):
 
 
 class AnalysisResult(BaseModel):
-    proofreading: str
-    structure: str
-    citations: str
-    consistency: str
-    vision: Optional[List[VisionFigureAnalysis]] = None
+    """Analysis results from all agents."""
+    language_quality: Optional[str] = None
+    structure: Optional[str] = None
+    citations: Optional[str] = None
+    math_review: Optional[str] = None
+    plagiarism: Optional[str] = None
+    vision: Optional[str] = None
+    final_report: Optional[str] = None
     pdf_report_path: Optional[str] = None

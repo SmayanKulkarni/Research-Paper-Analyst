@@ -12,7 +12,6 @@ langchain-core
 langchain-groq
 LiteLLM
 sentence-transformers
-pinecone
 
 pymupdf
 pypdf
@@ -41,8 +40,6 @@ adlfs
 # optional improvements
 tqdm
 pymupdf4llm>=0.0.1
-semanticscholar>=0.6.0
-pinecone_text
 
 # PDF report generation
 reportlab

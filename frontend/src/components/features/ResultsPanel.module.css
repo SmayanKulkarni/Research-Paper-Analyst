@@ -1,0 +1,228 @@
+.container {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  padding: 24px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.subtitle {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+/* Tabs */
+.tabsRoot {
+  display: flex;
+  flex-direction: column;
+}
+
+.tabsList {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 24px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.tabsTrigger {
+  all: unset;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.tabsTrigger:hover {
+  color: var(--text-main);
+  background: var(--bg-subtle);
+}
+
+.tabsTrigger[data-state='active'] {
+  color: var(--primary);
+  background: var(--primary-muted);
+  font-weight: 600;
+}
+
+.tabsContent {
+  outline: none;
+  animation: fadeIn 0.3s ease;
+}
+
+/* Accordion */
+.accordionRoot {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.accordionItem {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  overflow: hidden;
+}
+
+.accordionHeader {
+  all: unset;
+  display: flex;
+}
+
+.accordionTrigger {
+  all: unset;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--text-main);
+  cursor: pointer;
+  background: transparent;
+  transition: background 0.2s;
+}
+
+.accordionTrigger:hover {
+  background: var(--bg-card-hover);
+}
+
+.accordionChevron {
+  color: var(--text-muted);
+  transition: transform 0.3s cubic-bezier(0.87, 0, 0.13, 1);
+}
+
+.accordionTrigger[data-state='open'] .accordionChevron {
+  transform: rotate(180deg);
+}
+
+.accordionContent {
+  overflow: hidden;
+  background: var(--bg-app);
+}
+
+.accordionContent[data-state='open'] {
+  animation: slideDown 0.3s cubic-bezier(0.87, 0, 0.13, 1);
+}
+
+.accordionContent[data-state='closed'] {
+  animation: slideUp 0.3s cubic-bezier(0.87, 0, 0.13, 1);
+}
+
+.accordionBody {
+  padding: 16px;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.paragraph {
+  margin-bottom: 12px;
+}
+
+.bullet {
+  margin-bottom: 8px;
+  padding-left: 12px;
+  border-left: 2px solid var(--border);
+}
+
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px;
+  color: var(--text-muted);
+  gap: 12px;
+  background: var(--bg-subtle);
+  border-radius: var(--radius-lg);
+  border: 1px dashed var(--border);
+}
+
+.jsonContent {
+  background: var(--bg-subtle);
+  padding: 16px;
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.numbered {
+  margin-bottom: 12px;
+  padding-left: 8px;
+  color: var(--text-main);
+}
+
+.highlight {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  background: var(--primary-muted);
+  border-radius: var(--radius-sm);
+  color: var(--primary);
+  font-weight: 500;
+}
+
+.plainContent {
+  padding: 16px;
+  background: var(--bg-subtle);
+  border-radius: var(--radius-md);
+  line-height: 1.7;
+}
+
+.quote {
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  background: rgba(255, 193, 7, 0.1);
+  border-left: 3px solid #ffc107;
+  border-radius: var(--radius-sm);
+  font-style: italic;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+/* Similarity rating badges */
+.highlight strong {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideDown {
+  from { height: 0; }
+  to { height: var(--radix-accordion-content-height); }
+}
+
+@keyframes slideUp {
+  from { height: var(--radix-accordion-content-height); }
+  to { height: 0; }
+}
+

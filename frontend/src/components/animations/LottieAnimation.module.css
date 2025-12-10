@@ -1,0 +1,30 @@
+.container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sm {
+  width: 100px;
+  height: 100px;
+}
+
+.md {
+  width: 200px;
+  height: 200px;
+}
+
+.lg {
+  width: 300px;
+  height: 300px;
+}
+
+.xl {
+  width: 400px;
+  height: 400px;
+}
+
+.full {
+  width: 100%;
+  height: auto;
+}

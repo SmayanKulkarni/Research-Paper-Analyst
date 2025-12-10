@@ -29,21 +29,11 @@ class Settings(BaseSettings):
     GROQ_CONSISTENCY_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_CONSISTENCY_MODEL")
     GROQ_PLAGIARISM_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_PLAGIARISM_MODEL")
     GROQ_PROOFREADER_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_PROOFREADER_MODEL")
-    GROQ_MATH_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_MATH_MODEL")  # Math review agent
+    GROQ_MATH_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_MATH_MODEL")
 
     # Make OpenAI Key Optional
     OPENAI_API_KEY: Optional[str] = Field(None, env="OPENAI_API_KEY")
 
-    # ============================
-    # PINECONE & SEARCH
-    # ============================
-    PINECONE_API_KEY: str = Field(..., env="PINECONE_API_KEY")
-    PINECONE_ENVIRONMENT: str = Field(..., env="PINECONE_ENVIRONMENT")
-    PINECONE_INDEX_NAME: str = Field("research-plagiarism", env="PINECONE_INDEX_NAME")
-    
-    # ADDED: Missing field causing the crash
-    CROSS_ENCODER_MODEL: str = Field("cross-encoder/ms-marco-MiniLM-L-6-v2", env="CROSS_ENCODER_MODEL")
-    
     # ============================
     # EMBEDDINGS (local)
     # ============================
@@ -51,33 +41,10 @@ class Settings(BaseSettings):
     EMBEDDING_DIM: int = Field(1024, env="EMBEDDING_DIM")
 
     # ============================
-    # PROCESSING CONFIG
-    # ============================
-    PLAGIARISM_CHUNK_SIZE: int = Field(256, env="PLAGIARISM_CHUNK_SIZE")
-    PLAGIARISM_CHUNK_OVERLAP: int = Field(50, env="PLAGIARISM_CHUNK_OVERLAP")
-
-    # ============================
     # DYNAMIC TOKEN BUDGET (Accuracy-First Approach)
-    # Tokens are calculated based on actual PDF content length.
-    # Base budget: 200k tokens, expandable based on document complexity.
-    # 
-    # Strategy: Each agent gets tokens proportional to its task complexity:
-    # - Language Quality: Full paper text needed for thorough grammar/style review
-    # - Structure: Full paper for section analysis
-    # - Citation: Full paper to find and verify all citations
-    # - Plagiarism: Full paper for comprehensive originality check
-    # - Math Review: Only math sections (variable)
-    # - Vision: Based on number/complexity of images
-    # - Report: Aggregation of all outputs
     # ============================
-    
-    # Maximum token budget (can expand for longer/complex papers)
     MAX_TOKEN_BUDGET: int = Field(300000, env="MAX_TOKEN_BUDGET")
-    
-    # Minimum tokens per agent (ensures quality even for short papers)
     MIN_TOKENS_PER_AGENT: int = Field(5000, env="MIN_TOKENS_PER_AGENT")
-    
-    # Output token limits - generous for detailed analysis
     MAX_COMPLETION_TOKENS: int = Field(4096, env="MAX_COMPLETION_TOKENS")
     
     # Vision-specific settings
@@ -103,8 +70,6 @@ class Settings(BaseSettings):
 
     def _format_model(self, model: str) -> str:
         """Ensure model string is formatted for CrewAI (groq/model-name)"""
-        # Groq client accepts both "groq/..." and vendor-prefixed models like "openai/..."
-        # Keep as-is to allow "openai/gpt-oss-20b".
         return model
 
     @property
