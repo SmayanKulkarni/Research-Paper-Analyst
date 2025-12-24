@@ -27,9 +27,10 @@ class Settings(BaseSettings):
     GROQ_CITATION_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_CITATION_MODEL")
     GROQ_STRUCTURE_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_STRUCTURE_MODEL")
     GROQ_CONSISTENCY_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_CONSISTENCY_MODEL")
-    GROQ_PLAGIARISM_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_PLAGIARISM_MODEL")
     GROQ_PROOFREADER_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_PROOFREADER_MODEL")
-    GROQ_MATH_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_MATH_MODEL")  # Math review agent
+    GROQ_MATH_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_MATH_MODEL")
+    GROQ_CLARITY_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_CLARITY_MODEL")  # Clarity of thought agent
+    GROQ_FLOW_MODEL: str = Field("groq/llama-3.1-8b-instant", env="GROQ_FLOW_MODEL")  # Flow analysis agent
 
     # Make OpenAI Key Optional
     OPENAI_API_KEY: Optional[str] = Field(None, env="OPENAI_API_KEY")
@@ -39,7 +40,7 @@ class Settings(BaseSettings):
     # ============================
     PINECONE_API_KEY: str = Field(..., env="PINECONE_API_KEY")
     PINECONE_ENVIRONMENT: str = Field(..., env="PINECONE_ENVIRONMENT")
-    PINECONE_INDEX_NAME: str = Field("research-plagiarism", env="PINECONE_INDEX_NAME")
+    PINECONE_INDEX_NAME: str = Field("research-papers", env="PINECONE_INDEX_NAME")
     
     # ADDED: Missing field causing the crash
     CROSS_ENCODER_MODEL: str = Field("cross-encoder/ms-marco-MiniLM-L-6-v2", env="CROSS_ENCODER_MODEL")
@@ -53,8 +54,8 @@ class Settings(BaseSettings):
     # ============================
     # PROCESSING CONFIG
     # ============================
-    PLAGIARISM_CHUNK_SIZE: int = Field(256, env="PLAGIARISM_CHUNK_SIZE")
-    PLAGIARISM_CHUNK_OVERLAP: int = Field(50, env="PLAGIARISM_CHUNK_OVERLAP")
+    CHUNK_SIZE: int = Field(512, env="CHUNK_SIZE")  # For paper discovery and embeddings
+    CHUNK_OVERLAP: int = Field(50, env="CHUNK_OVERLAP")
 
     # ============================
     # DYNAMIC TOKEN BUDGET (Accuracy-First Approach)
@@ -65,7 +66,8 @@ class Settings(BaseSettings):
     # - Language Quality: Full paper text needed for thorough grammar/style review
     # - Structure: Full paper for section analysis
     # - Citation: Full paper to find and verify all citations
-    # - Plagiarism: Full paper for comprehensive originality check
+    # - Clarity: Full paper for logical reasoning analysis
+    # - Flow: Full paper for narrative and transition analysis
     # - Math Review: Only math sections (variable)
     # - Vision: Based on number/complexity of images
     # - Report: Aggregation of all outputs
@@ -120,12 +122,16 @@ class Settings(BaseSettings):
         return self._format_model(self.GROQ_CONSISTENCY_MODEL)
 
     @property
-    def CREW_PLAGIARISM_MODEL(self):
-        return self._format_model(self.GROQ_PLAGIARISM_MODEL)
-
-    @property
     def CREW_PROOFREADER_MODEL(self):
         return self._format_model(self.GROQ_PROOFREADER_MODEL)
+
+    @property
+    def CREW_CLARITY_MODEL(self):
+        return self._format_model(self.GROQ_CLARITY_MODEL)
+
+    @property
+    def CREW_FLOW_MODEL(self):
+        return self._format_model(self.GROQ_FLOW_MODEL)
 
     @property
     def CREW_MATH_MODEL(self):

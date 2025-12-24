@@ -27,11 +27,13 @@ def print_report(analysis_result: dict):
     print("FINAL RESEARCH PAPER ANALYSIS REPORT".center(80))
     print("="*80 + "\n")
 
-    # Updated sections to match consolidated agents (no plagiarism)
+    # Updated sections to match all agents
     sections = [
-        ("language_quality", "📝 LANGUAGE QUALITY (Grammar, Clarity, Consistency)"),
+        ("language_quality", "📝 LANGUAGE QUALITY"),
         ("structure", "🏗️  STRUCTURE & ORGANIZATION"),
         ("citations", "📖 CITATION ANALYSIS"),
+        ("clarity", "💡 CLARITY OF THOUGHT"),
+        ("flow", "🌊 FLOW & READABILITY"),
         ("math_review", "🔢 MATHEMATICAL CONTENT REVIEW"),
         ("vision", "👁️  VISUAL ANALYSIS"),
     ]

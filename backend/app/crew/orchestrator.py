@@ -4,17 +4,21 @@ from typing import Dict, List, Optional, Any
 from crewai import Crew, Process
 
 from app.config import get_settings
-# Consolidated agents (reduced from 6 to 4 + vision) - NO plagiarism
+# Consolidated agents with clarity and flow analysis
 from app.crew.agents.language_quality_agent import create_language_quality_agent
 from app.crew.agents.structure_agent import create_structure_agent
 from app.crew.agents.citation_agent import create_citation_agent
+from app.crew.agents.clarity_agent import create_clarity_agent
+from app.crew.agents.flow_agent import create_flow_agent
 from app.crew.agents.vision_agent import create_vision_agent
 from app.crew.agents.math_agent import create_math_review_agent
 
-# Consolidated tasks - NO plagiarism
+# Consolidated tasks
 from app.crew.tasks.language_quality_task import create_language_quality_task
 from app.crew.tasks.structure_task import create_structure_task
 from app.crew.tasks.citation_task import create_citation_task
+from app.crew.tasks.clarity_task import create_clarity_task
+from app.crew.tasks.flow_task import create_flow_task
 from app.crew.tasks.vision_task import create_vision_task
 from app.crew.tasks.math_task import create_math_review_task, detect_math_content, extract_math_content
 
@@ -66,6 +70,8 @@ class AnalysisOrchestratorService:
             "language_quality": 0,
             "structure": 0,
             "citation": 0,
+            "clarity": 0,
+            "flow": 0,
             "math_review": 0,
             "vision": 0,
             "total_estimated": 0
@@ -110,6 +116,12 @@ class AnalysisOrchestratorService:
         # More citations in longer papers = more output
         cite_output = min(base_output * 2, max(base_output, text_tokens // 15))
         
+        # Clarity: Analyzes logical reasoning throughout paper
+        clarity_output = min(base_output * 2, max(base_output, text_tokens // 12))
+        
+        # Flow: Analyzes transitions and narrative structure
+        flow_output = min(base_output * 2, max(base_output, text_tokens // 12))
+        
         # Math: Only if detected, needs extracted math sections
         math_output = base_output if has_math else 0
         
@@ -131,6 +143,16 @@ class AnalysisOrchestratorService:
                 "input": text_tokens,
                 "output": cite_output,
                 "total": text_tokens + cite_output
+            },
+            "clarity": {
+                "input": text_tokens,
+                "output": clarity_output,
+                "total": text_tokens + clarity_output
+            },
+            "flow": {
+                "input": text_tokens,
+                "output": flow_output,
+                "total": text_tokens + flow_output
             },
             "math_review": {
                 "input": text_tokens // 3 if has_math else 0,  # Math sections ~1/3 of paper max
@@ -276,10 +298,14 @@ class AnalysisOrchestratorService:
         lang_tokens = token_budget["language_quality"]["output"]
         struct_tokens = token_budget["structure"]["output"]
         cite_tokens = token_budget["citation"]["output"]
+        clarity_tokens = token_budget["clarity"]["output"]
+        flow_tokens = token_budget["flow"]["output"]
         
         language_agent = create_language_quality_agent(max_tokens=lang_tokens)
         structure_agent = create_structure_agent(max_tokens=struct_tokens)
         citation_agent = create_citation_agent(max_tokens=cite_tokens) if enable_citation else None
+        clarity_agent = create_clarity_agent(max_tokens=clarity_tokens)
+        flow_agent = create_flow_agent(max_tokens=flow_tokens)
 
         # ---------------------------------------------------------
         # Run Tasks INDIVIDUALLY with rate limiting
@@ -362,7 +388,53 @@ class AnalysisOrchestratorService:
             
             time.sleep(rate_limit_delay)
         
-        # Task 4: Math Review (only if paper has mathematical content)
+        # Task 4: Clarity of Thought - Logical reasoning analysis
+        logger.info(f"🔍 Running Clarity of Thought analysis (budget: {clarity_tokens:,} output tokens)...")
+        try:
+            clarity_crew = Crew(
+                agents=[clarity_agent],
+                tasks=[create_clarity_task(clarity_agent, full_text)],
+                process=Process.sequential,
+                verbose=True,
+                memory=False,
+            )
+            clarity_result = run_with_retry(
+                clarity_crew.kickoff,
+                max_retries=self.settings.MAX_RETRIES,
+                retry_delay=self.settings.RETRY_DELAY
+            )
+            structured_results["clarity"] = str(clarity_result)
+            logger.info("✅ Clarity analysis complete")
+        except Exception as e:
+            logger.error(f"Clarity analysis failed: {e}")
+            structured_results["clarity"] = f"Analysis failed: {str(e)[:100]}"
+        
+        time.sleep(rate_limit_delay)
+        
+        # Task 5: Flow Analysis - Narrative and transitions
+        logger.info(f"🔍 Running Flow analysis (budget: {flow_tokens:,} output tokens)...")
+        try:
+            flow_crew = Crew(
+                agents=[flow_agent],
+                tasks=[create_flow_task(flow_agent, full_text)],
+                process=Process.sequential,
+                verbose=True,
+                memory=False,
+            )
+            flow_result = run_with_retry(
+                flow_crew.kickoff,
+                max_retries=self.settings.MAX_RETRIES,
+                retry_delay=self.settings.RETRY_DELAY
+            )
+            structured_results["flow"] = str(flow_result)
+            logger.info("✅ Flow analysis complete")
+        except Exception as e:
+            logger.error(f"Flow analysis failed: {e}")
+            structured_results["flow"] = f"Analysis failed: {str(e)[:100]}"
+        
+        time.sleep(rate_limit_delay)
+        
+        # Task 6: Math Review (only if paper has mathematical content)
         # Note: has_math was already calculated during budget calculation
         if has_math:
             math_tokens = token_budget["math_review"]["output"]
@@ -476,6 +548,10 @@ class AnalysisOrchestratorService:
             summary_points.append("- **Structure**: Analysis completed")
         if results.get("citations") and "failed" not in results["citations"].lower():
             summary_points.append("- **Citations**: Analysis completed")
+        if results.get("clarity") and "failed" not in results["clarity"].lower():
+            summary_points.append("- **Clarity of Thought**: Analysis completed")
+        if results.get("flow") and "failed" not in results["flow"].lower():
+            summary_points.append("- **Flow & Readability**: Analysis completed")
         if results.get("math_review") and "failed" not in str(results["math_review"]).lower():
             summary_points.append("- **Mathematical Content**: Analysis completed")
         if results.get("vision") and "failed" not in str(results["vision"]).lower():
@@ -514,16 +590,34 @@ class AnalysisOrchestratorService:
             sections.append("*Citation analysis was not enabled or not available*")
         sections.append("\n\n---\n")
         
+        # Clarity Section
+        sections.append("## 4. Clarity of Thought Analysis\n")
+        sections.append("*Logical reasoning, argument structure, and idea clarity*\n\n")
+        if results.get("clarity"):
+            sections.append(str(results["clarity"]))
+        else:
+            sections.append("*Clarity analysis not available*")
+        sections.append("\n\n---\n")
+        
+        # Flow Section
+        sections.append("## 5. Flow & Readability Analysis\n")
+        sections.append("*Narrative flow, transitions, and reading experience*\n\n")
+        if results.get("flow"):
+            sections.append(str(results["flow"]))
+        else:
+            sections.append("*Flow analysis not available*")
+        sections.append("\n\n---\n")
+        
         # Math Review Section (conditional)
         if results.get("math_review"):
-            sections.append("## 4. Mathematical Content Review\n")
+            sections.append("## 6. Mathematical Content Review\n")
             sections.append("*Equation correctness, proofs, and notation*\n\n")
             sections.append(str(results["math_review"]))
             sections.append("\n\n---\n")
         
         # Vision Section (conditional)
         if results.get("vision"):
-            section_num = 5 if results.get("math_review") else 4
+            section_num = 7 if results.get("math_review") else 6
             sections.append(f"## {section_num}. Visual Elements Analysis\n")
             sections.append("*Figures, charts, and image quality assessment*\n\n")
             sections.append(str(results["vision"]))

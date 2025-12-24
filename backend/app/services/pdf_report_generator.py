@@ -194,6 +194,16 @@ class PDFReportGenerator:
                          results.get("citations"), section_num)
         section_num += 1
         
+        # Clarity
+        self._add_section(elements, "Clarity of Thought Analysis", 
+                         results.get("clarity"), section_num)
+        section_num += 1
+        
+        # Flow
+        self._add_section(elements, "Flow & Readability Analysis", 
+                         results.get("flow"), section_num)
+        section_num += 1
+        
         # Math Review (only if present)
         if results.get("math_review"):
             self._add_section(elements, "Mathematical Content Review", 
@@ -267,6 +277,8 @@ class PDFReportGenerator:
             ("Language Quality Analysis", "language_quality"),
             ("Paper Structure Analysis", "structure"),
             ("Citation Analysis", "citations"),
+            ("Clarity of Thought Analysis", "clarity"),
+            ("Flow & Readability Analysis", "flow"),
         ]:
             self._add_section(elements, title, results.get(key), section_num)
             section_num += 1

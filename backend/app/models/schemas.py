@@ -17,6 +17,8 @@ class AnalysisResult(BaseModel):
     proofreading: str
     structure: str
     citations: str
+    clarity: str
+    flow: str
     consistency: str
     vision: Optional[List[VisionFigureAnalysis]] = None
     pdf_report_path: Optional[str] = None
