@@ -17,10 +17,13 @@ def create_vision_agent():
             "Analyze the image thoroughly but concisely and try to find logical flaw only if extremely evident."
         ),
         goal="Analyze figures using vision tool. Call tool ONCE per image, then finish."
-             " Have a proper concise summary of the image analysis in the final report, if images are blurry or unclear ignore them fully as they might mistakes from image extraction.",
+             " Have a proper concise summary of the image analysis in the final report, if images are blurry or unclear ignore them fully as they might mistakes from image extraction."
+             " Formatting rules: Do NOT include internal thoughts, chain-of-thought, or meta commentary."
+             " Do NOT include headings like 'Thought', 'Reasoning', or 'Final Answer'."
+             " Return only the structured per-image analysis using the format: '### Image N: filename'.",
         llm=llm,
         tools=[vision_tool],
-        verbose=True,
+        verbose=False,
         max_iter=2,  # Limited iterations
         max_retry_limit=0,  # No retries
     )

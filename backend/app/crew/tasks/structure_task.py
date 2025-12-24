@@ -51,6 +51,10 @@ def create_structure_task(agent, text: str, section_headings: str = None) -> Tas
             "- Is the abstract properly structured (background, method, results, conclusion)?\n\n"
             "### 5. Recommendations\n"
             "Provide specific, actionable recommendations for improving structure.\n\n"
+            "Formatting Rules:\n"
+            "- Do NOT include internal thoughts, chain-of-thought, or meta commentary.\n"
+            "- Do NOT include headings like 'Thought', 'Reasoning', or 'Final Answer'.\n"
+            "- Return only the structured report with the following top-level sections: Section Presence & Completeness; Logical Flow Analysis; Section Quality Assessment; Academic Convention Compliance; Recommendations.\n\n"
             "---FULL PAPER TEXT---\n"
             f"{text}\n"
             "---END OF PAPER---"
@@ -61,7 +65,7 @@ def create_structure_task(agent, text: str, section_headings: str = None) -> Tas
             "2. Flow and coherence assessment\n"
             "3. Section-by-section quality notes\n"
             "4. Convention compliance score\n"
-            "5. Prioritized list of structural improvements"
+            "5. Prioritized list of structural improvements. Do not include any meta or internal reasoning."
         ),
         agent=agent,
         context=None,

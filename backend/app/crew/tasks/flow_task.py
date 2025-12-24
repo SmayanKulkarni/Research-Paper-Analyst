@@ -52,6 +52,10 @@ def create_flow_task(agent, text: str) -> Task:
             "- Topics change abruptly\n"
             "- The narrative loses momentum\n"
             "- The reader might feel confused\n"
+            "\nFormatting Rules:\n"
+            "- Do NOT include internal thoughts, chain-of-thought, or meta commentary.\n"
+            "- Do NOT include headings like 'Thought', 'Reasoning', or 'Final Answer'.\n"
+            "- Return only the structured report with the following sections: Overall Readability Score; Narrative Arc; Transitions; Paragraph-Level Flow; Readability; Flow Issues; Recommendations.\n"
             f"{truncation_note}\n"
             "---PAPER TEXT---\n"
             f"{text}\n"
@@ -63,7 +67,7 @@ def create_flow_task(agent, text: str) -> Task:
             "2. Assessment of narrative arc and structure\n"
             "3. Analysis of transitions quality\n"
             "4. Specific examples of flow problems\n"
-            "5. Recommendations for improving narrative flow and readability"
+            "5. Recommendations for improving narrative flow and readability. Do not include any meta or internal reasoning."
         ),
         agent=agent,
         context=None,

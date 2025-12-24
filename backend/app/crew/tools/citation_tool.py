@@ -1,15 +1,126 @@
 """
 Citation Reference Checker Tool
 
-Simple tool that checks if all citations in a paper's reference list
+Enhanced tool that checks if all citations in a paper's reference list
 are actually cited in the paper content, and vice versa.
+
+NEW: Semantic similarity features using embeddings:
+- Match citation contexts to references semantically
+- Detect potentially misattributed citations
+- Find citation contexts that may need references
+
 No external API calls - purely internal consistency checking.
 """
 
 import re
 from crewai.tools import tool
-from typing import Dict, List, Tuple, Set
+from typing import Dict, List, Tuple, Set, Optional
 from app.utils.logging import logger
+
+# Lazy import for semantic features
+_embeddings_available = None
+
+
+def _get_embeddings_module():
+    """Lazy load embeddings to avoid startup overhead."""
+    global _embeddings_available
+    if _embeddings_available is None:
+        try:
+            from app.services.embeddings import compute_similarity, find_most_similar
+            _embeddings_available = True
+        except ImportError:
+            _embeddings_available = False
+    return _embeddings_available
+
+
+def _semantic_match_citation_to_reference(
+    citation_context: str, 
+    references: List[Tuple[int, str]],
+    threshold: float = 0.5
+) -> Optional[Tuple[int, float]]:
+    """
+    Use semantic similarity to find the best matching reference for a citation context.
+    
+    Args:
+        citation_context: The sentence/paragraph containing the citation
+        references: List of (ref_number, ref_text) tuples
+        threshold: Minimum similarity score to consider a match
+        
+    Returns:
+        (best_ref_number, similarity_score) or None if no good match
+    """
+    if not _get_embeddings_module() or not references:
+        return None
+        
+    try:
+        from app.services.embeddings import find_most_similar
+        
+        ref_texts = [ref_text for _, ref_text in references]
+        results = find_most_similar(citation_context, ref_texts, top_k=1, threshold=threshold)
+        
+        if results:
+            idx, _, score = results[0]
+            return (references[idx][0], score)
+        return None
+    except Exception as e:
+        logger.debug(f"Semantic matching failed: {e}")
+        return None
+
+
+def _find_semantically_similar_content(
+    paper_content: str,
+    references: List[Tuple[int, str]],
+    threshold: float = 0.6
+) -> List[Dict]:
+    """
+    Find paragraphs that are semantically similar to references but may not be cited.
+    
+    This helps detect potential missing citations.
+    """
+    if not _get_embeddings_module() or not references:
+        return []
+    
+    try:
+        from app.services.embeddings import compute_similarity_matrix
+        import numpy as np
+        
+        # Split content into paragraphs
+        paragraphs = [p.strip() for p in paper_content.split('\n\n') if len(p.strip()) > 100]
+        
+        if not paragraphs:
+            return []
+        
+        ref_texts = [ref_text for _, ref_text in references]
+        
+        # Compute similarity matrix
+        sim_matrix = compute_similarity_matrix(paragraphs, ref_texts)
+        
+        if sim_matrix.size == 0:
+            return []
+        
+        # Find high-similarity pairs
+        findings = []
+        for i, para in enumerate(paragraphs):
+            max_sim_idx = np.argmax(sim_matrix[i])
+            max_sim = sim_matrix[i][max_sim_idx]
+            
+            if max_sim >= threshold:
+                # Check if this paragraph already has a citation
+                has_citation = bool(re.search(r'\[\d+\]|\(\w+,?\s*\d{4}\)', para))
+                
+                if not has_citation:
+                    findings.append({
+                        'paragraph_preview': para[:200] + '...',
+                        'similar_ref_num': references[max_sim_idx][0],
+                        'similar_ref_text': ref_texts[max_sim_idx][:150] + '...',
+                        'similarity': float(max_sim)
+                    })
+        
+        return findings[:5]  # Limit to top 5 findings
+        
+    except Exception as e:
+        logger.debug(f"Semantic content analysis failed: {e}")
+        return []
 
 
 def _extract_numbered_citations(text: str) -> Set[int]:
@@ -261,6 +372,30 @@ def check_citation_references(paper_text: str) -> str:
                 if len(issues) > 10:
                     lines.append(f"   ... and {len(issues) - 10} more issues")
             lines.append("")
+        
+        # =============================================================
+        # SEMANTIC ANALYSIS (if embeddings available)
+        # =============================================================
+        if _get_embeddings_module() and references:
+            lines.append("## 🧠 SEMANTIC CITATION ANALYSIS")
+            lines.append("(Using AI embeddings to analyze citation-content relationships)")
+            lines.append("")
+            
+            # Find content that may need citations
+            similar_content = _find_semantically_similar_content(content, references)
+            
+            if similar_content:
+                lines.append("### Potential Missing Citations")
+                lines.append("These paragraphs are semantically similar to references but lack citations:")
+                lines.append("")
+                for i, finding in enumerate(similar_content, 1):
+                    lines.append(f"**Finding {i}** (similarity: {finding['similarity']:.2f})")
+                    lines.append(f"   Content: \"{finding['paragraph_preview']}\"")
+                    lines.append(f"   Similar to Ref [{finding['similar_ref_num']}]: \"{finding['similar_ref_text']}\"")
+                    lines.append("")
+            else:
+                lines.append("✅ No uncited content found that closely matches references.")
+                lines.append("")
         
         # Final assessment
         lines.append("## FINAL ASSESSMENT")

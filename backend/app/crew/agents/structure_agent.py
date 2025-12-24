@@ -32,7 +32,10 @@ def create_structure_agent(max_tokens: int = None) -> Agent:
         goal=(
             "Perform a THOROUGH structural analysis of the research paper. "
             "Evaluate organization, section completeness, logical flow, and adherence "
-            "to academic conventions. Provide detailed, actionable recommendations."
+            "to academic conventions. Provide detailed, actionable recommendations. "
+            "Formatting rules: Do NOT include internal thoughts, chain-of-thought, or meta commentary. "
+            "Do NOT include headings like 'Thought', 'Reasoning', or 'Final Answer'. "
+            "Return only the structured analysis."
         ),
         backstory=(
             "You are an experienced academic reviewer and journal editor who has "
@@ -42,7 +45,7 @@ def create_structure_agent(max_tokens: int = None) -> Agent:
             "structural feedback that helps authors significantly improve their work."
         ),
         llm=llm,
-        verbose=True,
+        verbose=False,
         allow_delegation=False,
         max_iter=3,  # Allow thorough analysis
         max_retry_limit=1,  # One retry on failure

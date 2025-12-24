@@ -42,7 +42,10 @@ def create_clarity_agent(max_tokens: int = None) -> Agent:
         goal=(
             "Analyze the paper's logical reasoning, argument structure, and clarity of ideas. "
             "Identify unclear explanations, weak arguments, logical gaps, and areas where "
-            "the author's thinking could be more explicit or better organized."
+            "the author's thinking could be more explicit or better organized. "
+            "Formatting rules: Do NOT include internal thoughts, chain-of-thought, or meta commentary. "
+            "Do NOT include headings like 'Thought', 'Reasoning', or 'Final Answer'. "
+            "Return only the structured analysis."
         ),
         backstory=(
             "You are an expert in logic, critical thinking, and scientific communication. "
@@ -53,7 +56,7 @@ def create_clarity_agent(max_tokens: int = None) -> Agent:
         ),
         llm=llm,
         tools=[],
-        verbose=True,
+        verbose=False,
         allow_delegation=False,
         max_iter=3,
         max_retry_limit=1,

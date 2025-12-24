@@ -3,24 +3,37 @@ import re
 import arxiv
 import PyPDF2
 from typing import List, Optional, Dict, Any
-from sentence_transformers import SentenceTransformer, util
+from sentence_transformers import util
+import torch
 
 from app.config import get_settings
 from app.utils.logging import logger
 from app.services.parquet_store import append_new_papers
+from app.services.embeddings import get_embedding_model, embed_texts_numpy
 
 settings = get_settings()
 
 class PaperDiscoveryService:
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
+    def __init__(self):
         """
-        Initialize the service with the embedding model.
+        Initialize the service using the unified embedding model from embeddings.py.
+        
+        NOTE: Now uses the same model as all other embedding services for consistency.
+        Model is loaded lazily via get_embedding_model().
         """
         self.download_dir = os.path.join(settings.STORAGE_ROOT, "downloads")
         os.makedirs(self.download_dir, exist_ok=True)
         
-        logger.info(f"Loading SentenceTransformer model: {model_name}")
-        self.model = SentenceTransformer(model_name)
+        # Use the unified embedding model (lazy-loaded)
+        logger.info(f"Using unified embedding model: {settings.EMBEDDING_MODEL_NAME}")
+        self._model = None
+    
+    @property
+    def model(self):
+        """Lazy-load the embedding model."""
+        if self._model is None:
+            self._model = get_embedding_model()
+        return self._model
 
     def find_arxiv_id_in_pdf(self, pdf_path: str) -> Optional[str]:
         """
@@ -159,6 +172,28 @@ class PaperDiscoveryService:
         if papers_to_save:
             saved_records = append_new_papers(papers_to_save)
             logger.info(f"Pipeline complete. Saved {len(saved_records)} new records to database.")
+            
+            # 9. Upsert to Pinecone for semantic search
+            try:
+                from app.services.pinecone_client import pinecone_service
+                vectors_to_upsert = []
+                for record in saved_records:
+                    vectors_to_upsert.append({
+                        'id': record.get('paper_id') or record.get('url', '').replace('/', '-')[-20:],
+                        'values': record.get('embedding', []),
+                        'metadata': {
+                            'title': record.get('title', ''),
+                            'url': record.get('url', ''),
+                            'arxiv_id': record.get('url', '').split('/abs/')[-1] if '/abs/' in record.get('url', '') else '',
+                            'similarity': float(record.get('similarity', 0)),
+                        }
+                    })
+                if vectors_to_upsert:
+                    pinecone_service.upsert_vectors(vectors_to_upsert)
+                    logger.info(f"Upserted {len(vectors_to_upsert)} papers to Pinecone for semantic search.")
+            except Exception as e:
+                logger.warning(f"Pinecone upsert failed (continuing): {e}")
+            
             return saved_records
         
         return []

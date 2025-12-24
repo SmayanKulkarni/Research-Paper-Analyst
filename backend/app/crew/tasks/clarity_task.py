@@ -51,6 +51,10 @@ def create_clarity_task(agent, text: str) -> Task:
             "- Overly complex for no reason\n"
             "- Logically unclear\n"
             "- Missing key explanations\n"
+            "\nFormatting Rules:\n"
+            "- Do NOT include internal thoughts, chain-of-thought, or meta commentary.\n"
+            "- Do NOT include headings like 'Thought', 'Reasoning', or 'Final Answer'.\n"
+            "- Return only the structured report with the following sections: Overall Clarity Score; Main Argument Clarity; Logical Reasoning; Explanation Quality; Argument Strength; Clarity Issues; Recommendations.\n"
             f"{truncation_note}\n"
             "---PAPER TEXT---\n"
             f"{text}\n"
@@ -62,7 +66,7 @@ def create_clarity_task(agent, text: str) -> Task:
             "2. Assessment of main argument clarity\n"
             "3. Analysis of logical reasoning quality\n"
             "4. Specific examples of unclear or illogical passages\n"
-            "5. Recommendations for improving clarity and logical flow"
+            "5. Recommendations for improving clarity and logical flow. Do not include any meta or internal reasoning."
         ),
         agent=agent,
         context=None,

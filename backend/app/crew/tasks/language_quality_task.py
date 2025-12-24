@@ -42,13 +42,18 @@ def create_language_quality_task(agent, text: str) -> Task:
             "- What the problem is\n"
             "- Suggested correction\n\n"
             "Organize findings by severity: Critical → Major → Minor\n\n"
+            "Formatting Rules:\n"
+            "- Do NOT include internal thoughts, chain-of-thought, or meta commentary.\n"
+            "- Do NOT include headings like 'Thought', 'Reasoning', or 'Final Answer'.\n"
+            "- Return only the structured report with the following top-level sections: Grammar & Syntax; Clarity & Readability; Academic Style; Consistency Checks; Recommendations.\n\n"
             "---FULL PAPER TEXT---\n"
             f"{text}\n"
             "---END OF PAPER---"
         ),
         expected_output=(
-            "A detailed language quality report organized by category (Grammar, Clarity, Style, Consistency) "
-            "with specific issues, their locations, and suggested corrections. Include severity ratings."
+            "A detailed language quality report organized by category (Grammar & Syntax; Clarity & Readability; Academic Style; Consistency Checks; Recommendations) "
+            "with specific issues, their locations, and suggested corrections. Include severity ratings. "
+            "Do not include any meta or internal reasoning."
         ),
         agent=agent,
         context=None,

@@ -38,17 +38,26 @@ def create_citation_agent(max_tokens: int = None) -> Agent:
         goal=(
             "Check if all citations in the paper content (like [1], [2], etc.) have "
             "corresponding entries in the References section, and if all references "
-            "are actually cited in the paper. Identify any mismatches or gaps."
+            "are actually cited in the paper. Identify any mismatches or gaps. "
+            "Apply the QUICK CHECKLIST before approving any citation: "
+            "(1) Does it support the claim? (2) Is the source credible? "
+            "(3) Is it accurate and fairly represented? (4) Is it properly formatted? "
+            "(5) Is it current and accessible? "
+            "Formatting rules: Do NOT include internal thoughts, chain-of-thought, or meta commentary. "
+            "Do NOT include headings like 'Thought', 'Reasoning', or 'Final Answer'. "
+            "Return only the structured analysis."
         ),
         backstory=(
             "You are a meticulous academic editor who specializes in verifying that "
             "papers have consistent citation-reference linking. You check that every "
             "numbered citation in the text has a matching reference, and every reference "
-            "in the bibliography is actually used in the paper."
+            "in the bibliography is actually used in the paper. In addition to linkage, you "
+            "evaluate claim support, source credibility, faithful representation, formatting, "
+            "and recency/accessibility for citations."
         ),
         llm=llm,
         tools=[check_citation_references],
-        verbose=True,
+        verbose=False,
         allow_delegation=False,
         max_iter=2,
         max_retry_limit=1,

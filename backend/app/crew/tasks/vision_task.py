@@ -34,13 +34,16 @@ def create_vision_task(agent, images: List[str]) -> Task:
             "   - Data presentation quality\n"
             "3. Provide overall assessment of figure quality\n"
             "4. List specific improvements for each figure\n\n"
-            "DO NOT analyze any text - focus ONLY on the visual elements."
+            "DO NOT analyze any text - focus ONLY on the visual elements.\n\n"
+            "Formatting Rules:\n"
+            "- Do NOT include internal thoughts, chain-of-thought, or meta commentary.\n"
+            "- Do NOT include headings like 'Thought', 'Reasoning', or 'Final Answer'.\n"
+            "- Return ONLY a per-image report using the exact format: '### Image N: filename' followed by the analysis."
         ),
         expected_output=(
-            "A figure quality report containing:\n"
-            "- Individual analysis for each figure\n"
-            "- Overall quality score\n"
-            "- Specific recommendations for improvement"
+            "A figure quality report containing only per-image sections using '### Image N: filename', "
+            "with each section summarizing type, key information, quality assessment, and recommendations. "
+            "Do not include any meta or internal reasoning."
         ),
         agent=agent,
         # No context from other tasks - vision analysis is completely independent

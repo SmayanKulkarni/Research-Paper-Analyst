@@ -5,16 +5,33 @@ Intelligent preprocessing service that extracts relevant portions of research pa
 for each specialized agent, reducing token usage by 60-90% while maintaining analysis quality.
 
 Key Features:
-- Comprehensive section detection with 50+ heading variations
+- Comprehensive section detection with 150+ heading variations
 - Complete citation extraction (never miss any citation)
 - Context-aware sampling for each agent type
 - Handles varied academic paper formats (IEEE, ACM, Springer, arXiv, etc.)
+- SEMANTIC RETRIEVAL: Uses embeddings to find most relevant sections for each agent
 """
 
 import re
 from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass
 from app.utils.logging import logger
+
+# Lazy import for semantic service to avoid circular imports
+_semantic_service = None
+
+
+def get_semantic_service():
+    """Lazy load semantic section service."""
+    global _semantic_service
+    if _semantic_service is None:
+        try:
+            from app.services.semantic_section_service import get_semantic_section_service
+            _semantic_service = get_semantic_section_service()
+        except Exception as e:
+            logger.warning(f"Could not load semantic service: {e}")
+            _semantic_service = False  # Mark as unavailable
+    return _semantic_service if _semantic_service else None
 
 
 @dataclass
@@ -455,6 +472,214 @@ class PaperPreprocessor:
         else:
             logger.warning(f"No preprocessor for agent type: {agent_type}. Using full text.")
             return full_text
+    
+    def preprocess_for_agent_semantic(
+        self, 
+        full_text: str, 
+        agent_type: str,
+        paper_id: str = "default"
+    ) -> str:
+        """
+        SEMANTIC-ENHANCED preprocessing using embeddings.
+        
+        This method combines regex-based section extraction with
+        semantic similarity ranking to provide the most relevant
+        content for each agent type.
+        
+        Process:
+        1. Extract all sections using regex patterns
+        2. Embed sections (cached for reuse)
+        3. Rank sections by semantic relevance to agent's task
+        4. Apply agent-specific preprocessing to top-ranked sections
+        
+        Args:
+            full_text: Complete paper text
+            agent_type: Type of agent
+            paper_id: Unique identifier for caching embeddings
+            
+        Returns:
+            Semantically-optimized preprocessed text
+        """
+        semantic_svc = get_semantic_service()
+        
+        if semantic_svc is None:
+            # Fallback to regex-only preprocessing
+            logger.debug("Semantic service unavailable, using regex-only preprocessing")
+            return self.preprocess_for_agent(full_text, agent_type)
+        
+        try:
+            # 1. Extract all sections using regex
+            sections = self._find_all_sections(full_text)
+            
+            if not sections:
+                logger.warning("No sections found, using regex-only preprocessing")
+                return self.preprocess_for_agent(full_text, agent_type)
+            
+            # 2. Embed sections (will use cache if already done)
+            sections_data = [
+                {
+                    'name': s.name,
+                    'heading': s.heading,
+                    'content': s.content,
+                    'start_pos': s.start_pos,
+                    'end_pos': s.end_pos
+                }
+                for s in sections
+            ]
+            semantic_svc.embed_paper_sections(paper_id, sections_data)
+            
+            # 3. Get semantically relevant sections for this agent
+            relevant = semantic_svc.get_sections_for_agent(
+                paper_id=paper_id,
+                agent_type=agent_type,
+                max_sections=8  # Get top 8 relevant sections
+            )
+            
+            if not relevant:
+                logger.debug(f"No semantic matches for {agent_type}, using regex-only")
+                return self.preprocess_for_agent(full_text, agent_type)
+            
+            # 4. Build optimized text from relevant sections
+            # First apply regex-based preprocessing to get structured output
+            regex_result = self.preprocess_for_agent(full_text, agent_type)
+            
+            # Add semantic relevance information
+            semantic_header = f"\n=== SEMANTIC RELEVANCE RANKING (Agent: {agent_type}) ===\n"
+            semantic_info = []
+            for i, r in enumerate(relevant[:5]):  # Show top 5
+                semantic_info.append(
+                    f"{i+1}. {r.heading} (relevance: {r.score:.2f})"
+                )
+            
+            # Combine: regex preprocessing + semantic ranking info
+            enhanced_result = (
+                regex_result + 
+                "\n\n" + semantic_header +
+                "\n".join(semantic_info)
+            )
+            
+            logger.info(f"Semantic preprocessing for {agent_type}: "
+                       f"top section '{relevant[0].heading}' (score: {relevant[0].score:.2f})")
+            
+            return enhanced_result
+            
+        except Exception as e:
+            logger.warning(f"Semantic preprocessing failed: {e}. Falling back to regex-only.")
+            return self.preprocess_for_agent(full_text, agent_type)
+    
+    def embed_paper_for_analysis(self, full_text: str, paper_id: str) -> bool:
+        """
+        Pre-embed all paper sections for faster agent-specific retrieval.
+        
+        Call this once before running multiple agents to avoid
+        re-embedding for each agent.
+        
+        Args:
+            full_text: Complete paper text
+            paper_id: Unique identifier for the paper
+            
+        Returns:
+            True if embedding successful, False otherwise
+        """
+        semantic_svc = get_semantic_service()
+        if semantic_svc is None:
+            return False
+            
+        try:
+            # Extract all sections
+            sections = self._find_all_sections(full_text)
+            
+            if not sections:
+                logger.warning(f"No sections found for paper {paper_id}")
+                return False
+            
+            # Embed sections
+            sections_data = [
+                {
+                    'name': s.name,
+                    'heading': s.heading,
+                    'content': s.content,
+                    'start_pos': s.start_pos,
+                    'end_pos': s.end_pos
+                }
+                for s in sections
+            ]
+            semantic_svc.embed_paper_sections(paper_id, sections_data)
+            
+            # Also extract and embed citations if available
+            citation_data = self._extract_all_citations(full_text)
+            if citation_data.get('citation_contexts') and citation_data.get('references_section'):
+                # Parse references into list
+                refs_text = citation_data['references_section']
+                refs = [r.strip() for r in refs_text.split('\n') if r.strip() and len(r.strip()) > 20]
+                
+                semantic_svc.embed_citations(
+                    paper_id=paper_id,
+                    citation_contexts=citation_data['citation_contexts'][:100],  # Limit for performance
+                    references=refs[:100]
+                )
+            
+            logger.info(f"Embedded {len(sections)} sections for paper {paper_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to embed paper {paper_id}: {e}")
+            return False
+    
+    def get_semantic_section_ranking(
+        self, 
+        full_text: str, 
+        agent_type: str,
+        paper_id: str = "default"
+    ) -> List[Tuple[str, float]]:
+        """
+        Get section relevance ranking for an agent without full preprocessing.
+        
+        Useful for debugging and understanding what sections are most
+        relevant for each agent type.
+        
+        Args:
+            full_text: Complete paper text
+            agent_type: Type of agent
+            paper_id: Paper identifier
+            
+        Returns:
+            List of (section_heading, relevance_score) tuples
+        """
+        semantic_svc = get_semantic_service()
+        if semantic_svc is None:
+            return []
+            
+        try:
+            # Ensure paper is embedded
+            sections = self._find_all_sections(full_text)
+            if not sections:
+                return []
+                
+            sections_data = [
+                {
+                    'name': s.name,
+                    'heading': s.heading,
+                    'content': s.content,
+                    'start_pos': s.start_pos,
+                    'end_pos': s.end_pos
+                }
+                for s in sections
+            ]
+            semantic_svc.embed_paper_sections(paper_id, sections_data)
+            
+            # Get relevance ranking
+            relevant = semantic_svc.get_sections_for_agent(
+                paper_id=paper_id,
+                agent_type=agent_type,
+                max_sections=15
+            )
+            
+            return [(r.heading, r.score) for r in relevant]
+            
+        except Exception as e:
+            logger.warning(f"Failed to get semantic ranking: {e}")
+            return []
     
     # ==========================================================================
     # SECTION EXTRACTION METHODS

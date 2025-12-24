@@ -1,6 +1,8 @@
 import os
 import time
 from typing import Dict, List, Optional, Any
+import os
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from crewai import Crew, Process
 
@@ -12,7 +14,6 @@ from app.crew.agents.citation_agent import create_citation_agent
 from app.crew.agents.clarity_agent import create_clarity_agent
 from app.crew.agents.flow_agent import create_flow_agent
 from app.crew.agents.vision_agent import create_vision_agent
-from app.crew.agents.math_agent import create_math_review_agent
 
 # Consolidated tasks
 from app.crew.tasks.language_quality_task import create_language_quality_task
@@ -21,13 +22,14 @@ from app.crew.tasks.citation_task import create_citation_task
 from app.crew.tasks.clarity_task import create_clarity_task
 from app.crew.tasks.flow_task import create_flow_task
 from app.crew.tasks.vision_task import create_vision_task
-from app.crew.tasks.math_task import create_math_review_task, detect_math_content, extract_math_content
 
 from app.crew.tools.pdf_tool import load_pdf
 from app.services.paper_discovery import PaperDiscoveryService
 from app.services.image_extractor import extract_images_from_pdf
+from app.services.image_reference_filter import get_image_reference_filter
 from app.services.pdf_report_generator import PDFReportGenerator
 from app.services.paper_preprocessor import get_preprocessor
+from app.services.citation_resolver import get_citation_resolver
 from app.utils.logging import logger
 
 settings = get_settings()
@@ -62,8 +64,9 @@ class AnalysisOrchestratorService:
     - Each agent receives the full context it needs for thorough analysis
     - No arbitrary token limits - agents use what they need
     - Budget scales with document complexity (up to 300k tokens)
-    - Math Review agent only runs if paper has mathematical content
     - Structured final report compilation
+    
+    PDF reports are saved to: storage/reports/
     """
     
     def __init__(self):
@@ -74,7 +77,6 @@ class AnalysisOrchestratorService:
             "citation": 0,
             "clarity": 0,
             "flow": 0,
-            "math_review": 0,
             "vision": 0,
             "total_estimated": 0
         }
@@ -83,7 +85,7 @@ class AnalysisOrchestratorService:
         """Estimate token count from text (roughly 4 chars = 1 token)."""
         return len(text) // self.settings.CHARS_PER_TOKEN
     
-    def _calculate_token_budget(self, text: str, num_images: int, has_math: bool) -> Dict[str, int]:
+    def _calculate_token_budget(self, text: str, num_images: int) -> Dict[str, int]:
         """
         Calculate token budget for each agent based on actual content.
         
@@ -95,11 +97,10 @@ class AnalysisOrchestratorService:
         text_tokens = self._estimate_tokens(text)
         
         # Log the paper stats
-        logger.info(f"📊 Paper Analysis:")
+        logger.info(f"Paper Analysis:")
         logger.info(f"   - Text length: {len(text):,} characters")
         logger.info(f"   - Estimated tokens: {text_tokens:,}")
         logger.info(f"   - Images: {num_images}")
-        logger.info(f"   - Has math content: {has_math}")
         
         # Calculate per-agent budgets
         # Each agent needs: input (paper) + output (analysis)
@@ -123,9 +124,6 @@ class AnalysisOrchestratorService:
         
         # Flow: Analyzes transitions and narrative structure
         flow_output = min(base_output * 2, max(base_output, text_tokens // 12))
-        
-        # Math: Only if detected, needs extracted math sections
-        math_output = base_output if has_math else 0
         
         # Vision: Based on number of images
         vision_output = min(num_images * 500, self.settings.MAX_VISION_TOKENS * num_images // 5) if num_images > 0 else 0
@@ -156,11 +154,6 @@ class AnalysisOrchestratorService:
                 "output": flow_output,
                 "total": text_tokens + flow_output
             },
-            "math_review": {
-                "input": text_tokens // 3 if has_math else 0,  # Math sections ~1/3 of paper max
-                "output": math_output,
-                "total": (text_tokens // 3 + math_output) if has_math else 0
-            },
             "vision": {
                 "input": num_images * 1000,  # ~1k tokens per image
                 "output": vision_output,
@@ -172,7 +165,7 @@ class AnalysisOrchestratorService:
         total = sum(b["total"] for b in budget.values())
         budget["total_estimated"] = total
         
-        logger.info(f"📈 Token Budget Allocation:")
+        logger.info(f"Token Budget Allocation:")
         for agent, alloc in budget.items():
             if isinstance(alloc, dict):
                 logger.info(f"   - {agent}: {alloc['total']:,} tokens (in: {alloc['input']:,}, out: {alloc['output']:,})")
@@ -279,26 +272,50 @@ class AnalysisOrchestratorService:
         
         full_text = text
         text_length = len(full_text)
+        
+        # Filter images: Only use images that are explicitly referenced in the paper
+        # If no "Figure X", "Table X", etc. mentions exist, exclude all images
+        if images:
+            logger.info(f"Filtering {len(images)} extracted images based on paper references...")
+            image_filter = get_image_reference_filter()
+            images = image_filter.filter_images(full_text, images)
+            logger.info(f"After filtering: {len(images)} images will be used for analysis")
+            
+            # Get filtering report for debugging
+            report = image_filter.get_filtering_report(full_text, images)
+            if report.get('all_images_excluded_reason'):
+                logger.info(f"Image filtering reason: {report['all_images_excluded_reason']}")
+        
         num_images = len(images) if images else 0
         
-        # Detect math content early for budget calculation
-        has_math = detect_math_content(full_text)
-        
         # Calculate dynamic token budget based on actual content
-        token_budget = self._calculate_token_budget(full_text, num_images, has_math)
+        token_budget = self._calculate_token_budget(full_text, num_images)
         self.token_usage["total_estimated"] = token_budget["total_estimated"]
         
-        logger.info(f"🎯 Total estimated token usage: {token_budget['total_estimated']:,} tokens")
+        logger.info(f"Total estimated token usage: {token_budget['total_estimated']:,} tokens")
         
         # Extract section headings for structure analysis (supplementary, not replacement)
         section_headings = self._extract_section_headings(full_text)
 
         # ---------------------------------------------------------
         # PREPROCESSING: Extract relevant portions for each agent
+        # Now with SEMANTIC ENHANCEMENT using embeddings
         # This reduces token usage by 60-90% while maintaining quality
         # ---------------------------------------------------------
-        logger.info("📝 Preprocessing paper for each agent...")
+        logger.info("Preprocessing paper for each agent (with semantic enhancement)...")
         preprocessor = get_preprocessor()
+        
+        # Generate unique paper ID for embedding cache
+        import hashlib
+        paper_id = hashlib.md5(full_text[:5000].encode()).hexdigest()[:16]
+        
+        # Pre-embed paper sections for all agents (done once, reused)
+        logger.info("Embedding paper sections for semantic retrieval...")
+        embedding_success = preprocessor.embed_paper_for_analysis(full_text, paper_id)
+        if embedding_success:
+            logger.info("Paper sections embedded successfully")
+        else:
+            logger.info("Semantic embedding unavailable, using regex-only preprocessing")
         
         # Get preprocessing stats for logging
         preprocess_stats = preprocessor.get_preprocessing_stats(full_text)
@@ -307,15 +324,23 @@ class AnalysisOrchestratorService:
         logger.info(f"   - Unique citations: {preprocess_stats['unique_citations']}")
         logger.info(f"   - Citation range: {preprocess_stats['citation_range']}")
         
-        # Preprocess for each agent type
-        language_input = preprocessor.preprocess_for_agent(full_text, "language_quality")
-        structure_input = preprocessor.preprocess_for_agent(full_text, "structure")
-        citation_input = preprocessor.preprocess_for_agent(full_text, "citation")
-        clarity_input = preprocessor.preprocess_for_agent(full_text, "clarity")
-        flow_input = preprocessor.preprocess_for_agent(full_text, "flow")
-        math_input = preprocessor.preprocess_for_agent(full_text, "math") if has_math else ""
+        # Preprocess for each agent type (using semantic enhancement if available)
+        if embedding_success:
+            # Use semantic-enhanced preprocessing
+            language_input = preprocessor.preprocess_for_agent_semantic(full_text, "language_quality", paper_id)
+            structure_input = preprocessor.preprocess_for_agent_semantic(full_text, "structure", paper_id)
+            citation_input = preprocessor.preprocess_for_agent_semantic(full_text, "citation", paper_id)
+            clarity_input = preprocessor.preprocess_for_agent_semantic(full_text, "clarity", paper_id)
+            flow_input = preprocessor.preprocess_for_agent_semantic(full_text, "flow", paper_id)
+        else:
+            # Fallback to regex-only preprocessing
+            language_input = preprocessor.preprocess_for_agent(full_text, "language_quality")
+            structure_input = preprocessor.preprocess_for_agent(full_text, "structure")
+            citation_input = preprocessor.preprocess_for_agent(full_text, "citation")
+            clarity_input = preprocessor.preprocess_for_agent(full_text, "clarity")
+            flow_input = preprocessor.preprocess_for_agent(full_text, "flow")
         
-        logger.info("✅ Preprocessing complete")
+        logger.info("Preprocessing complete")
 
         # ---------------------------------------------------------
         # Create Agents with Dynamic Token Allocation
@@ -334,6 +359,41 @@ class AnalysisOrchestratorService:
         flow_agent = create_flow_agent(max_tokens=flow_tokens)
 
         # ---------------------------------------------------------
+        # Citation Cross-Validation (arXiv only, no web search)
+        # ---------------------------------------------------------
+        citation_validation_report_str = None
+        if enable_citation:
+            try:
+                logger.info("Running citation cross-validation (arXiv resolution)...")
+                resolver = get_citation_resolver()
+                file_tag = (file_id or "direct")
+                citation_uses = resolver.validate_all(full_text, file_tag=file_tag)
+                # Format concise report
+                lines = ["# Citation Validation & Suggestions", ""]
+                for cu in citation_uses[:50]:  # cap to 50 entries
+                    ref = cu.reference
+                    title = (ref.title if ref and ref.title else "Unknown Title")
+                    arx = (ref.arxiv_id if ref and ref.arxiv_id else "-")
+                    year = (str(ref.year) if ref and ref.year else "-")
+                    lines.append(f"## Citation [{cu.citation_number}] - {title} (arXiv: {arx}, year: {year})")
+                    lines.append(f"- Used Section: {cu.used_section_title or '-'}")
+                    lines.append(f"- Support Score: {cu.support_score:.3f}")
+                    chk = cu.checklist
+                    lines.append(f"- Supports Claim: {'Yes' if chk.get('supports_claim') else 'No'}")
+                    lines.append(f"- Source Credible: {'Yes' if chk.get('source_credible') else 'No'}")
+                    lines.append(f"- Fairly Represented: {'Yes' if chk.get('fair_representation') else 'No'}")
+                    lines.append(f"- Properly Formatted: {'Yes' if chk.get('proper_formatting') else 'No'}")
+                    lines.append(f"- Current & Accessible: {'Yes' if chk.get('current_and_accessible') else 'No'}")
+                    if cu.suggestions:
+                        lines.append("- Suggestions:")
+                        for s in cu.suggestions:
+                            lines.append(f"  - {s}")
+                    lines.append("")
+                citation_validation_report_str = "\n".join(lines)
+            except Exception as e:
+                logger.error(f"Citation cross-validation failed: {e}")
+
+        # ---------------------------------------------------------
         # Run Tasks IN PARALLEL with PREPROCESSED inputs
         # Each agent receives optimized, relevant content
         # ---------------------------------------------------------
@@ -341,7 +401,7 @@ class AnalysisOrchestratorService:
         structured_results["token_budget"] = token_budget  # Include budget info in results
         structured_results["preprocessing_stats"] = preprocess_stats  # Include preprocessing stats
         
-        logger.info("🚀 Starting PARALLEL agent execution with preprocessed inputs...")
+        logger.info("Starting PARALLEL agent execution with preprocessed inputs...")
         logger.info("=" * 60)
         
         # Define all agent tasks to run in parallel (with preprocessed inputs)
@@ -388,19 +448,7 @@ class AnalysisOrchestratorService:
             "budget": flow_tokens,
         })
         
-        # Task 6: Math Review (only if paper has mathematical content) - preprocessed input
-        if has_math:
-            math_tokens = token_budget["math_review"]["output"]
-            math_agent = create_math_review_agent()
-            
-            agent_tasks.append({
-                "name": "math_review",
-                "agent": math_agent,
-                "task_creator": lambda input_text=math_input: create_math_review_task(math_agent, input_text),
-                "budget": math_tokens,
-            })
-        
-        # Task 7: Vision (if enabled and images available)
+        # Task 6: Vision (if enabled and images available)
         if enable_vision and images:
             vision_agent = create_vision_agent()
             agent_tasks.append({
@@ -417,14 +465,14 @@ class AnalysisOrchestratorService:
             agent = task_info["agent"]
             budget = task_info["budget"]
             
-            logger.info(f"🔍 Starting {task_name} analysis (budget: {budget:,} output tokens)...")
+            logger.info(f"Starting {task_name} analysis (budget: {budget:,} output tokens)...")
             
             try:
                 crew = Crew(
                     agents=[agent],
                     tasks=[task_info["task_creator"]()],
                     process=Process.sequential,
-                    verbose=True,
+                    verbose=False,
                     memory=False,
                 )
                 
@@ -434,11 +482,11 @@ class AnalysisOrchestratorService:
                     retry_delay=self.settings.RETRY_DELAY
                 )
                 
-                logger.info(f"✅ {task_name} analysis complete")
+                logger.info(f"{task_name} analysis complete")
                 return (task_name, str(result), None)
                 
             except Exception as e:
-                logger.error(f"❌ {task_name} analysis failed: {e}")
+                logger.error(f"{task_name} analysis failed: {e}")
                 return (task_name, None, f"Analysis failed: {str(e)[:100]}")
         
         # Run all agents in parallel
@@ -465,7 +513,7 @@ class AnalysisOrchestratorService:
                     structured_results[task_name] = f"Analysis failed: {str(e)[:100]}"
         
         logger.info("=" * 60)
-        logger.info("✅ All parallel agents completed!")
+        logger.info("All parallel agents completed!")
         
         # Ensure all expected keys exist (even if they failed)
         if "language_quality" not in structured_results:
@@ -478,17 +526,68 @@ class AnalysisOrchestratorService:
             structured_results["clarity"] = "Analysis not available"
         if "flow" not in structured_results:
             structured_results["flow"] = "Analysis not available"
-        if has_math and "math_review" not in structured_results:
-            structured_results["math_review"] = "Analysis not available"
         if enable_vision and images and "vision" not in structured_results:
             structured_results["vision"] = "Analysis not available"
         
         # Set None for disabled features
-        if not has_math:
-            structured_results["math_review"] = None
-            logger.info("No significant mathematical content detected. Skipping Math Review.")
         if not (enable_vision and images):
             structured_results["vision"] = None
+
+        # Sanitize agent outputs to remove LLM meta like thoughts/final answers
+        def _sanitize_text(text: Any) -> str:
+            if text is None:
+                return ""
+            s = str(text)
+            blacklist = [
+                "Final Answer", "FINAL ANSWER", "Thought:", "Thoughts:", "Reasoning:",
+                "Chain of Thought", "Self-critique", "Critique:", "Plan:", "Reflection:",
+                "I now can give a great answer", "Let's think", "I will now",
+            ]
+            for b in blacklist:
+                s = s.replace(b, "")
+            # Remove common bold headings
+            s = s.replace("**Final Answer**", "").replace("**Thought**", "")
+            # Trim and collapse excess spacing
+            s = "\n".join([ln.rstrip() for ln in s.split("\n")]).strip()
+            return s
+
+        for key in ["language_quality", "structure", "citations", "clarity", "flow", "vision"]:
+            if key in structured_results and structured_results[key] is not None:
+                structured_results[key] = _sanitize_text(structured_results[key])
+
+        if citation_validation_report_str:
+            structured_results["citations_validation"] = citation_validation_report_str
+
+        # Build structured vision items (image + per-image analysis), if available
+        def _extract_vision_items(vision_text: Optional[str], image_paths: Optional[List[str]]) -> List[Dict[str, Any]]:
+            if not vision_text or not image_paths:
+                return []
+            items: List[Dict[str, Any]] = []
+            by_name = {os.path.basename(p): p for p in image_paths}
+            # Pattern like: "### Image 1: filename.png" then content until next ### or end
+            pattern = re.compile(r"^###\s*Image\s*(\d+)\s*:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
+            matches = list(pattern.finditer(vision_text))
+            if matches:
+                for i, m in enumerate(matches):
+                    start = m.end()
+                    end = matches[i + 1].start() if i + 1 < len(matches) else len(vision_text)
+                    filename = m.group(2).strip()
+                    analysis = vision_text[start:end].strip()
+                    path = by_name.get(filename)
+                    # fallback by order if filename not found
+                    if not path and i < len(image_paths):
+                        path = image_paths[i]
+                        filename = os.path.basename(path)
+                    items.append({"index": i + 1, "filename": filename, "path": path, "analysis": analysis})
+            else:
+                # Fallback: pair by order, split content roughly by lines
+                # Use entire vision_text as common analysis
+                for i, p in enumerate(image_paths):
+                    items.append({"index": i + 1, "filename": os.path.basename(p), "path": p, "analysis": vision_text})
+            return items
+
+        if enable_vision and images and structured_results.get("vision"):
+            structured_results["vision_items"] = _extract_vision_items(structured_results.get("vision"), images)
 
         # ---------------------------------------------------------
         # Generate Structured Final Report
@@ -508,12 +607,12 @@ class AnalysisOrchestratorService:
                 file_id=log_id
             )
             structured_results["pdf_report_path"] = pdf_path
-            logger.info(f"✅ PDF report saved to: {pdf_path}")
+            logger.info(f"PDF report saved to: {pdf_path}")
         except Exception as e:
             logger.error(f"PDF report generation failed: {e}")
             structured_results["pdf_report_path"] = None
         
-        logger.info("🎉 All analysis complete!")
+        logger.info("All analysis complete!")
         return structured_results
     
     def _compile_final_report(self, results: Dict[str, Any]) -> str:
@@ -544,8 +643,6 @@ class AnalysisOrchestratorService:
             summary_points.append("- **Clarity of Thought**: Analysis completed")
         if results.get("flow") and "failed" not in results["flow"].lower():
             summary_points.append("- **Flow & Readability**: Analysis completed")
-        if results.get("math_review") and "failed" not in str(results["math_review"]).lower():
-            summary_points.append("- **Mathematical Content**: Analysis completed")
         if results.get("vision") and "failed" not in str(results["vision"]).lower():
             summary_points.append("- **Visual Elements**: Analysis completed")
         
@@ -581,6 +678,13 @@ class AnalysisOrchestratorService:
         else:
             sections.append("*Citation analysis was not enabled or not available*")
         sections.append("\n\n---\n")
+
+        # Citation Validation & Suggestions
+        if results.get("citations_validation"):
+            sections.append("## 3b. Citation Validation & Suggestions\n")
+            sections.append("*Checklist-based validation against arXiv sources*\n\n")
+            sections.append(str(results["citations_validation"]))
+            sections.append("\n\n---\n")
         
         # Clarity Section
         sections.append("## 4. Clarity of Thought Analysis\n")
@@ -600,17 +704,9 @@ class AnalysisOrchestratorService:
             sections.append("*Flow analysis not available*")
         sections.append("\n\n---\n")
         
-        # Math Review Section (conditional)
-        if results.get("math_review"):
-            sections.append("## 6. Mathematical Content Review\n")
-            sections.append("*Equation correctness, proofs, and notation*\n\n")
-            sections.append(str(results["math_review"]))
-            sections.append("\n\n---\n")
-        
         # Vision Section (conditional)
         if results.get("vision"):
-            section_num = 7 if results.get("math_review") else 6
-            sections.append(f"## {section_num}. Visual Elements Analysis\n")
+            sections.append(f"## 6. Visual Elements Analysis\n")
             sections.append("*Figures, charts, and image quality assessment*\n\n")
             sections.append(str(results["vision"]))
             sections.append("\n\n---\n")
@@ -628,7 +724,6 @@ def run_full_analysis(
     pdf_path: str = None,
     enable_vision: bool = True,
     enable_citation: bool = True,
-    enable_math: bool = True,  # Math review enabled by default (auto-detects if needed)
 ):
     service = AnalysisOrchestratorService()
     return service.run_analysis(

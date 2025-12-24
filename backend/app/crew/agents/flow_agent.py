@@ -42,7 +42,10 @@ def create_flow_agent(max_tokens: int = None) -> Agent:
         goal=(
             "Evaluate the paper's narrative flow, transitions, and overall readability. "
             "Identify where the paper loses momentum, has jarring transitions, or could "
-            "guide the reader more smoothly through the content."
+            "guide the reader more smoothly through the content. "
+            "Formatting rules: Do NOT include internal thoughts, chain-of-thought, or meta commentary. "
+            "Do NOT include headings like 'Thought', 'Reasoning', or 'Final Answer'. "
+            "Return only the structured analysis."
         ),
         backstory=(
             "You are an expert in scientific writing and narrative structure with a background "
@@ -54,7 +57,7 @@ def create_flow_agent(max_tokens: int = None) -> Agent:
         ),
         llm=llm,
         tools=[],
-        verbose=True,
+        verbose=False,
         allow_delegation=False,
         max_iter=3,
         max_retry_limit=1,

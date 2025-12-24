@@ -7,7 +7,7 @@ Uses ReportLab for PDF generation - outputs raw agent text as-is.
 
 import os
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from io import BytesIO
 
 from reportlab.lib import colors
@@ -15,7 +15,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Preformatted, PageBreak
+    SimpleDocTemplate, Paragraph, Spacer, Preformatted, PageBreak, Image as RLImage
 )
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
@@ -29,8 +29,13 @@ class PDFReportGenerator:
     """
     
     def __init__(self, output_dir: str = "storage/reports"):
-        self.output_dir = output_dir
-        os.makedirs(output_dir, exist_ok=True)
+        # Resolve output directory relative to backend root to avoid CWD issues
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        if not os.path.isabs(output_dir):
+            self.output_dir = os.path.join(base_dir, output_dir)
+        else:
+            self.output_dir = output_dir
+        os.makedirs(self.output_dir, exist_ok=True)
         self.styles = self._create_styles()
     
     def _create_styles(self):
@@ -92,6 +97,43 @@ class PDFReportGenerator:
         
         return styles
     
+    def _sanitize_text(self, text: str) -> str:
+        """Remove common LLM meta like thoughts/final-answer markers."""
+        if not text:
+            return ""
+        s = str(text)
+        # Common headings/phrases to remove entirely
+        blacklist = [
+            "Final Answer", "FINAL ANSWER", "Thought:", "Thoughts:", "Reasoning:",
+            "Chain of Thought", "Self-critique", "Critique:", "Plan:", "Reflection:",
+            "I now can give a great answer", "Let's think", "I will now",
+        ]
+        for b in blacklist:
+            s = s.replace(b, "")
+        # Remove markdown bold markers that were part of meta headings
+        s = s.replace("**Final Answer**", "").replace("**Thought**", "")
+        # Collapse excessive blank lines
+        lines = [ln.rstrip() for ln in s.split("\n")]
+        cleaned: List[str] = []
+        for ln in lines:
+            # skip lone meta lines
+            lower = ln.strip().lower()
+            if lower in {"final answer:", "thought:", "thoughts:", "reasoning:", "plan:", "reflection:"}:
+                continue
+            cleaned.append(ln)
+        # Remove sequences of >2 empty lines
+        out: List[str] = []
+        empty = 0
+        for ln in cleaned:
+            if ln.strip() == "":
+                empty += 1
+                if empty <= 2:
+                    out.append(ln)
+            else:
+                empty = 0
+                out.append(ln)
+        return "\n".join(out).strip()
+
     def _escape_xml(self, text: str) -> str:
         """Escape special XML characters for ReportLab."""
         if not text:
@@ -114,7 +156,7 @@ class PDFReportGenerator:
             ))
         else:
             # Convert content to string and escape XML characters
-            text = str(content) if content else "No output available."
+            text = self._sanitize_text(str(content) if content else "No output available.")
             
             # Split by lines and add each as a paragraph to preserve formatting
             lines = text.split('\n')
@@ -126,6 +168,56 @@ class PDFReportGenerator:
                     elements.append(Spacer(1, 6))
         
         elements.append(Spacer(1, 15))
+
+    def _is_meaningful_analysis(self, text: str) -> bool:
+        """Heuristic to decide if vision analysis contains useful info."""
+        if not text:
+            return False
+        t = text.strip().lower()
+        if len(t) < 40:
+            return False
+        bad_phrases = [
+            "cannot extract", "can't extract", "unclear", "blurry", "illegible",
+            "no discernible", "not readable", "unable to analyze", "no analysis available",
+        ]
+        if any(p in t for p in bad_phrases):
+            return False
+        return True
+
+    def _add_vision_gallery(self, elements: list, vision_items: List[Dict[str, Any]]):
+        """Add images with their analyses into the PDF."""
+        elements.append(Paragraph("Visual Elements Analysis", self.styles['SectionHeader']))
+        for idx, item in enumerate(vision_items, 1):
+            img_path = item.get("path") or item.get("image_path")
+            analysis = self._sanitize_text(item.get("analysis") or item.get("analysis_sanitized") or "")
+            if not img_path or not os.path.exists(img_path):
+                continue
+            if not self._is_meaningful_analysis(analysis):
+                continue
+            # Add image
+            try:
+                rl_img = RLImage(img_path)
+                max_width = 6.0 * inch
+                # Scale keeping aspect ratio
+                iw, ih = rl_img.imageWidth, rl_img.imageHeight
+                if iw > max_width:
+                    scale = max_width / float(iw)
+                    rl_img.drawWidth = iw * scale
+                    rl_img.drawHeight = ih * scale
+                elements.append(rl_img)
+            except Exception as e:
+                logger.debug(f"Failed to embed image {img_path}: {e}")
+                # Skip embedding but keep analysis
+            # Add caption/analysis
+            caption = f"Image {idx}: {os.path.basename(img_path)}"
+            elements.append(Paragraph(self._escape_xml(caption), self.styles['AgentOutput']))
+            if analysis:
+                for line in analysis.split("\n"):
+                    if line.strip():
+                        elements.append(Paragraph(self._escape_xml(line), self.styles['AgentOutput']))
+                    else:
+                        elements.append(Spacer(1, 6))
+            elements.append(Spacer(1, 15))
     
     def generate_report(
         self,
@@ -204,16 +296,20 @@ class PDFReportGenerator:
                          results.get("flow"), section_num)
         section_num += 1
         
-        # Math Review (only if present)
-        if results.get("math_review"):
-            self._add_section(elements, "Mathematical Content Review", 
-                             results.get("math_review"), section_num)
+        # Citation Validation & Suggestions (optional)
+        if results.get("citations_validation"):
+            self._add_section(elements, "Citation Validation & Suggestions", 
+                             results.get("citations_validation"), section_num)
             section_num += 1
-        
+
         # Vision (only if present)
-        if results.get("vision"):
-            self._add_section(elements, "Visual Elements Analysis", 
-                             results.get("vision"), section_num)
+        vision_items = results.get("vision_items")
+        if isinstance(vision_items, list) and vision_items:
+            self._add_vision_gallery(elements, vision_items)
+            section_num += 1
+        elif results.get("vision"):
+            self._add_section(elements, "Visual Elements Analysis",
+                              results.get("vision"), section_num)
             section_num += 1
         
         # Footer
@@ -226,7 +322,7 @@ class PDFReportGenerator:
         # Build PDF
         try:
             doc.build(elements)
-            logger.info(f"✅ PDF report generated: {output_path}")
+            logger.info(f"PDF report generated: {output_path}")
             return output_path
         except Exception as e:
             logger.error(f"Failed to generate PDF report: {e}")
@@ -283,14 +379,17 @@ class PDFReportGenerator:
             self._add_section(elements, title, results.get(key), section_num)
             section_num += 1
         
-        if results.get("math_review"):
-            self._add_section(elements, "Mathematical Content Review", 
-                             results.get("math_review"), section_num)
+        if results.get("citations_validation"):
+            self._add_section(elements, "Citation Validation & Suggestions", 
+                             results.get("citations_validation"), section_num)
             section_num += 1
         
-        if results.get("vision"):
-            self._add_section(elements, "Visual Elements Analysis", 
-                             results.get("vision"), section_num)
+        vision_items = results.get("vision_items")
+        if isinstance(vision_items, list) and vision_items:
+            self._add_vision_gallery(elements, vision_items)
+        elif results.get("vision"):
+            self._add_section(elements, "Visual Elements Analysis",
+                              results.get("vision"), section_num)
         
         elements.append(Spacer(1, 30))
         elements.append(Paragraph(
@@ -303,7 +402,7 @@ class PDFReportGenerator:
         pdf_bytes = buffer.getvalue()
         buffer.close()
         
-        logger.info(f"✅ PDF report generated ({len(pdf_bytes)} bytes)")
+        logger.info(f"PDF report generated ({len(pdf_bytes)} bytes)")
         return pdf_bytes
 
 
