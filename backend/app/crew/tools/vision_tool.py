@@ -60,6 +60,14 @@ def analyze_single_image(image_path: str, client: Groq, model: str) -> Dict[str,
     try:
         base64_image = _encode_image_to_base64(image_path)
         mime_type = _get_image_mime_type(image_path)
+        file_size = os.path.getsize(image_path)
+        
+        # Skip very small images (likely artifacts or noise)
+        if file_size < 1000:  # < 1KB
+            return {
+                "filename": os.path.basename(image_path),
+                "error": "Image too small (likely artifact or noise)",
+            }
         
         response = client.chat.completions.create(
             model=model,
@@ -76,7 +84,7 @@ def analyze_single_image(image_path: str, client: Groq, model: str) -> Dict[str,
                                 "2. Key information/data it conveys\n"
                                 "3. Quality assessment (clarity, labeling, legends)\n"
                                 "4. Any issues or improvements needed\n"
-                                "Be concise but thorough."
+                                "Be concise but thorough. If the image is blank or unclear, say so."
                             ),
                         },
                         {
@@ -88,20 +96,27 @@ def analyze_single_image(image_path: str, client: Groq, model: str) -> Dict[str,
                     ],
                 }
             ],
-            max_tokens=settings.MAX_VISION_TOKENS,  # Use config value
-            temperature=0.2,
+            max_tokens=settings.MAX_VISION_TOKENS,
+            temperature=0.1,  # Lower temp for more consistent output
         )
+        
+        content = response.choices[0].message.content
+        if not content or content.strip() == "":
+            return {
+                "filename": os.path.basename(image_path),
+                "error": "LLM returned empty response (image may be invalid or unsafe)",
+            }
         
         return {
             "filename": os.path.basename(image_path),
-            "analysis": response.choices[0].message.content,
+            "analysis": content,
             "tokens_used": response.usage.total_tokens if response.usage else 0,
         }
         
     except Exception as e:
         return {
             "filename": os.path.basename(image_path),
-            "error": str(e),
+            "error": f"Vision analysis failed: {str(e)[:100]}",
         }
 
 
@@ -130,27 +145,35 @@ def vision_tool(image_paths: str) -> str:
     
     results = []
     total_tokens = 0
+    successful = 0
     
     for path in paths:
         result = analyze_single_image(path, client, model)
         results.append(result)
+        if "analysis" in result and "error" not in result:
+            successful += 1
         total_tokens += result.get("tokens_used", 0)
     
     # Format output
-    output_parts = [f"## Vision Analysis Report\n\nAnalyzed {len(results)} images.\n"]
+    output_parts = [f"## Vision Analysis Report\n\nAnalyzed {len(results)} images ({successful} successful).\n"]
     
     for i, result in enumerate(results, 1):
         output_parts.append(f"\n### Image {i}: {result['filename']}\n")
         
         if "error" in result:
-            output_parts.append(f"**Error:** {result['error']}\n")
-        else:
-            output_parts.append(result.get("analysis", "No analysis available."))
+            output_parts.append(f"**Status:** {result['error']}\n")
+        elif "analysis" in result:
+            output_parts.append(result["analysis"])
             output_parts.append("\n")
+        else:
+            output_parts.append("No analysis available.\n")
     
     output_parts.append(f"\n---\n*Total tokens used: {total_tokens}*")
     
-    return "\n".join(output_parts)
+    final_output = "\n".join(output_parts)
+    if not final_output or final_output.strip() == "":
+        return "Vision analysis could not be completed - all images failed or were invalid."
+    return final_output
 
 
 # Legacy function for backward compatibility

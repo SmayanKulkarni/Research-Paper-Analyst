@@ -22,30 +22,26 @@ def create_vision_task(agent, images: List[str]) -> Task:
     
     return Task(
         description=(
-            "Analyze the scientific FIGURES from a research paper.\n\n"
+            "Analyze the scientific FIGURES from a research paper using the vision tool.\n\n"
             "IMAGE PATHS TO ANALYZE:\n"
             f"{image_paths_str}\n\n"
             "INSTRUCTIONS:\n"
-            "1. Use the 'Analyze Scientific Images' tool with the image paths above\n"
-            "2. For EACH figure, assess:\n"
-            "   - Figure type (chart, diagram, table, photo, etc.)\n"
-            "   - Clarity and readability\n"
-            "   - Label completeness (axis labels, legends, captions)\n"
-            "   - Data presentation quality\n"
-            "3. Provide overall assessment of figure quality\n"
-            "4. List specific improvements for each figure\n\n"
-            "DO NOT analyze any text - focus ONLY on the visual elements.\n\n"
+            "1. Call the 'Analyze Scientific Images' tool ONCE with the image paths above\n"
+            "2. The tool will process each image independently\n"
+            "3. Report the tool's output exactly as returned (do not modify or rewrite)\n"
+            "4. If images are blank, corrupted, or unclear, the tool will report that\n"
+            "5. If no images are available or all failed, report that clearly\n\n"
+            "CRITICAL: Return ONLY the tool output. Do not add internal thoughts or meta commentary.\n\n"
             "Formatting Rules:\n"
-            "- Do NOT include internal thoughts, chain-of-thought, or meta commentary.\n"
-            "- Do NOT include headings like 'Thought', 'Reasoning', or 'Final Answer'.\n"
-            "- Return ONLY a per-image report using the exact format: '### Image N: filename' followed by the analysis."
+            "- Include only the tool's output\n"
+            "- Do NOT add internal thoughts, chain-of-thought, or meta commentary\n"
+            "- Do NOT include 'Thought', 'Reasoning', or 'Final Answer' headings"
         ),
         expected_output=(
-            "A figure quality report containing only per-image sections using '### Image N: filename', "
-            "with each section summarizing type, key information, quality assessment, and recommendations. "
-            "Do not include any meta or internal reasoning."
+            "The exact output from the 'Analyze Scientific Images' tool, including per-image analysis "
+            "with status (success or error), figure type, quality assessment, and recommendations. "
+            "If any images failed, report that clearly."
         ),
         agent=agent,
-        # No context from other tasks - vision analysis is completely independent
         context=None,
     )

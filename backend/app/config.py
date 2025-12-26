@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     # ============================
     # DYNAMIC TOKEN BUDGET (Accuracy-First Approach)
     # Tokens are calculated based on actual PDF content length.
-    # Base budget: 200k tokens, expandable based on document complexity.
+    # EXPANDED budget: 500k+ tokens for comprehensive analysis.
     # 
     # Strategy: Each agent gets tokens proportional to its task complexity:
     # - Language Quality: Full paper text needed for thorough grammar/style review
@@ -71,23 +71,40 @@ class Settings(BaseSettings):
     # - Math Review: Only math sections (variable)
     # - Vision: Based on number/complexity of images
     # - Report: Aggregation of all outputs
+    # 
+    # PREPROCESSING: Multi-point sampling strategy (beginning, middle, end sections)
     # ============================
     
-    # Maximum token budget (can expand for longer/complex papers)
-    MAX_TOKEN_BUDGET: int = Field(300000, env="MAX_TOKEN_BUDGET")
+    # Maximum token budget (expanded for longer/complex papers - no artificial ceiling)
+    MAX_TOKEN_BUDGET: int = Field(500000, env="MAX_TOKEN_BUDGET")
     
     # Minimum tokens per agent (ensures quality even for short papers)
-    MIN_TOKENS_PER_AGENT: int = Field(5000, env="MIN_TOKENS_PER_AGENT")
+    MIN_TOKENS_PER_AGENT: int = Field(8000, env="MIN_TOKENS_PER_AGENT")
     
-    # Output token limits - generous for detailed analysis
-    MAX_COMPLETION_TOKENS: int = Field(4096, env="MAX_COMPLETION_TOKENS")
+    # Output token limits - very generous for detailed analysis
+    MAX_COMPLETION_TOKENS: int = Field(6000, env="MAX_COMPLETION_TOKENS")
     
     # Vision-specific settings
-    MAX_VISION_TOKENS: int = Field(2000, env="MAX_VISION_TOKENS")
-    MAX_IMAGES_TO_ANALYZE: int = Field(15, env="MAX_IMAGES_TO_ANALYZE")
+    MAX_VISION_TOKENS: int = Field(3000, env="MAX_VISION_TOKENS")
+    MAX_IMAGES_TO_ANALYZE: int = Field(25, env="MAX_IMAGES_TO_ANALYZE")
     
     # Token estimation ratio (characters to tokens, roughly 4 chars = 1 token)
     CHARS_PER_TOKEN: int = Field(4, env="CHARS_PER_TOKEN")
+    
+    # ============================
+    # PREPROCESSING SAMPLING STRATEGY
+    # ============================
+    # Enables multi-point sampling from different parts of the document
+    ENABLE_MULTI_POINT_SAMPLING: bool = Field(True, env="ENABLE_MULTI_POINT_SAMPLING")
+    
+    # Number of samples to extract from each section (beginning, middle, end)
+    SAMPLING_POINTS_PER_SECTION: int = Field(3, env="SAMPLING_POINTS_PER_SECTION")
+    
+    # Maximum characters per extracted sample (before truncation)
+    MAX_SAMPLE_LENGTH: int = Field(15000, env="MAX_SAMPLE_LENGTH")
+    
+    # Enable full-text analysis for short papers (< this many chars)
+    SHORT_PAPER_THRESHOLD: int = Field(20000, env="SHORT_PAPER_THRESHOLD")
 
     # ============================
     # RATE LIMITING (Groq Free/Dev Tier)

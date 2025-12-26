@@ -16,6 +16,7 @@ import re
 from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass
 from app.utils.logging import logger
+from app.config import get_settings
 
 # Lazy import for semantic service to avoid circular imports
 _semantic_service = None
@@ -979,87 +980,199 @@ class PaperPreprocessor:
         return unique_contexts
     
     # ==========================================================================
-    # AGENT-SPECIFIC PREPROCESSING METHODS
+    # MULTI-POINT SAMPLING STRATEGY (NEW)
+    # Samples from beginning, middle, and end of document for comprehensive coverage
+    # ==========================================================================
+    
+    def _get_multipoint_samples(self, full_text: str, sample_size: int = 4000, num_points: int = 3) -> str:
+        """
+        Extract samples from multiple points in the document.
+        
+        Strategy:
+        - Beginning: First sample_size chars after abstract/intro
+        - Middle: Middle sample_size chars
+        - End: Last sample_size chars before references
+        
+        Args:
+            full_text: Complete paper text
+            sample_size: Chars to extract per sample
+            num_points: Number of sampling points (3 = beginning, middle, end)
+            
+        Returns:
+            Combined multipoint samples as string
+        """
+        text_len = len(full_text)
+        samples = []
+        
+        # Calculate sampling points
+        if num_points == 1:
+            points = [0]  # Just use beginning
+        elif num_points == 2:
+            points = [0, text_len // 2]  # Beginning and middle
+        else:
+            # Multiple points: beginning, evenly spaced middle, end
+            points = [0]  # Beginning
+            for i in range(1, num_points - 1):
+                points.append(int(text_len * i / num_points))
+            points.append(max(text_len - sample_size, 0))  # End
+        
+        for point_idx, point in enumerate(points):
+            # Extract sample starting near this point
+            sample_start = max(0, point - sample_size // 2)
+            sample_end = min(text_len, sample_start + sample_size)
+            
+            # Adjust to word boundaries
+            if sample_start > 0:
+                # Find next sentence boundary
+                next_period = full_text.find('. ', sample_start)
+                if next_period != -1 and next_period < sample_start + 200:
+                    sample_start = next_period + 2
+            
+            sample = full_text[sample_start:sample_end].strip()
+            
+            # Remove incomplete words at start/end
+            if sample_start > 0:
+                first_space = sample.find(' ')
+                if first_space > 0:
+                    sample = sample[first_space + 1:]
+                sample = '...' + sample
+            
+            if sample_end < text_len:
+                last_space = sample.rfind(' ')
+                if last_space > 0 and last_space < len(sample) - 50:
+                    sample = sample[:last_space] + '...'
+            
+            if sample:
+                section_label = ["BEGINNING", "MIDDLE", "END"][min(point_idx, 2)]
+                samples.append(f"=== MULTIPOINT SAMPLE ({section_label}) ===\n{sample}")
+        
+        return "\n\n".join(samples)
+    
+    def _sample_from_sections(self, sections: List[ExtractedSection], max_chars_per_section: int = 5000) -> str:
+        """
+        Extract diverse samples from each section.
+        
+        For each section: get beginning, middle, and end portions.
+        This ensures comprehensive coverage without processing entire sections.
+        
+        Args:
+            sections: List of extracted sections
+            max_chars_per_section: Max chars to extract from each section
+            
+        Returns:
+            Combined samples from all sections
+        """
+        samples = []
+        
+        for section in sections:
+            if not section.content:
+                continue
+                
+            content = section.content.strip()
+            content_len = len(content)
+            sample_size = max_chars_per_section // 3  # Divide into 3 samples
+            
+            # Get beginning, middle, end
+            parts = []
+            
+            # Beginning
+            beginning = content[:sample_size].strip()
+            if beginning:
+                parts.append(f"[START] {beginning}")
+            
+            # Middle
+            if content_len > sample_size * 2:
+                mid_start = (content_len - sample_size) // 2
+                middle = content[mid_start:mid_start + sample_size].strip()
+                if middle:
+                    parts.append(f"[MIDDLE] {middle}")
+            
+            # End
+            if content_len > sample_size:
+                end = content[-sample_size:].strip()
+                if end:
+                    parts.append(f"[END] {end}")
+            
+            # Combine section samples
+            if parts:
+                section_sample = f"\n[{section.heading}]\n" + "\n\n".join(parts)
+                samples.append(section_sample)
+        
+        return "\n\n".join(samples)
+    
+    # ==========================================================================
+    # AGENT-SPECIFIC PREPROCESSING METHODS (ENHANCED WITH MULTI-POINT SAMPLING)
     # ==========================================================================
     
     def preprocess_for_language_quality(self, full_text: str) -> str:
         """
         Extract representative samples for language quality analysis.
         
-        Strategy:
+        ENHANCED STRATEGY (Multi-Point Sampling):
         - Full abstract (critical for first impressions)
-        - Introduction (first 2000 words - sets paper tone)
-        - Samples from each major section (500 words each)
-        - Conclusion (full - summary of writing quality)
+        - Beginning, middle, and end of introduction
+        - Samples from each major section (beginning, middle, end)
+        - Full conclusion
+        - Overall document quality samples from multiple points
         
-        Token reduction: ~70-80%
+        Token reduction: ~60-70% (higher than before due to comprehensive sampling)
         """
         sections = self._find_all_sections(full_text)
         components = []
+        settings = get_settings()
+        
+        # Check if paper is short enough to analyze fully
+        if len(full_text) < settings.SHORT_PAPER_THRESHOLD:
+            logger.info(f"Short paper detected ({len(full_text)} chars). Using full-text analysis.")
+            return f"=== FULL TEXT (SHORT PAPER) ===\n{full_text}"
         
         # 1. Full abstract
         abstract = self._extract_abstract(full_text)
         if abstract:
-            components.append(f"=== ABSTRACT ===\n{abstract}")
+            components.append(f"=== ABSTRACT (LANGUAGE QUALITY BASELINE) ===\n{abstract}")
         
-        # 2. Introduction (substantial sample)
-        intro = self._extract_sections_by_categories(
-            sections, ["introduction"], max_chars=8000
-        )
-        if intro:
-            components.append(f"\n=== INTRODUCTION ===\n{intro}")
-        else:
-            # Fallback: first 2000 words after abstract
-            words = full_text.split()
-            intro_fallback = ' '.join(words[:2000])
-            components.append(f"\n=== INTRODUCTION (SAMPLE) ===\n{intro_fallback}")
+        # 2. Introduction with multi-point sampling
+        intro_sections = [s for s in sections if s.name == "introduction"]
+        if intro_sections:
+            intro_content = "\n".join([s.content for s in intro_sections])
+            components.append(f"\n=== INTRODUCTION (MULTI-POINT SAMPLES) ===")
+            components.append(self._sample_from_sections(intro_sections, max_chars_per_section=8000))
         
-        # 3. Related work sample
-        related = self._extract_sections_by_categories(
-            sections, ["related_work"], max_chars=3000
-        )
-        if related:
-            components.append(f"\n=== RELATED WORK (SAMPLE) ===\n{related}")
+        # 3. Multi-point samples from all major sections
+        major_categories = ["methodology", "results", "experiments", "discussion", "related_work"]
+        major_sections = [s for s in sections if s.name in major_categories]
         
-        # 4. Methodology sample
-        methodology = self._extract_sections_by_categories(
-            sections, ["methodology", "model", "theory"], max_chars=4000
-        )
-        if methodology:
-            components.append(f"\n=== METHODOLOGY (SAMPLE) ===\n{methodology}")
+        if major_sections:
+            components.append(f"\n=== MAJOR SECTIONS (MULTI-POINT SAMPLES) ===")
+            section_samples = self._sample_from_sections(major_sections, max_chars_per_section=6000)
+            components.append(section_samples)
         
-        # 5. Results/Experiments sample
-        results = self._extract_sections_by_categories(
-            sections, ["results", "experiments", "data"], max_chars=4000
-        )
-        if results:
-            components.append(f"\n=== RESULTS (SAMPLE) ===\n{results}")
-        
-        # 6. Discussion sample
-        discussion = self._extract_sections_by_categories(
-            sections, ["discussion"], max_chars=3000
-        )
-        if discussion:
-            components.append(f"\n=== DISCUSSION (SAMPLE) ===\n{discussion}")
-        
-        # 7. Full conclusion
+        # 4. Full conclusion
         conclusion = self._extract_sections_by_categories(
-            sections, ["conclusion", "future_work"], max_chars=5000
+            sections, ["conclusion", "future_work"], max_chars=8000
         )
         if conclusion:
-            components.append(f"\n=== CONCLUSION ===\n{conclusion}")
+            components.append(f"\n=== CONCLUSION (FULL FOR QUALITY CHECK) ===\n{conclusion}")
         
-        # If no sections found, use sampling strategy
-        if len(components) <= 1:
-            logger.warning("Few sections detected. Using full-text sampling strategy.")
-            paragraphs = [p.strip() for p in full_text.split('\n\n') if len(p.strip()) > 50]
-            # Sample: first 10, middle 5, last 5 paragraphs
-            samples = paragraphs[:10]
-            if len(paragraphs) > 20:
-                mid = len(paragraphs) // 2
-                samples.extend(paragraphs[mid-2:mid+3])
-            samples.extend(paragraphs[-5:])
-            components = [f"=== SAMPLED CONTENT ===\n" + '\n\n'.join(samples[:20])]
+        # 5. Overall document quality samples from different points
+        if len(full_text) > 5000:  # Only if paper is substantial
+            components.append(f"\n=== OVERALL DOCUMENT SAMPLES ===")
+            multipoint = self._get_multipoint_samples(full_text, sample_size=3000, num_points=3)
+            components.append(multipoint)
+        
+        # Fallback if very few sections found
+        if len(components) <= 2:
+            logger.warning("Few sections detected for language quality. Using comprehensive paragraph sampling.")
+            paragraphs = [p.strip() for p in full_text.split('\n\n') if len(p.strip()) > 100]
+            if paragraphs:
+                # Sample: first 5, every 5th, last 5
+                samples = paragraphs[:5]
+                for i in range(5, len(paragraphs), max(1, len(paragraphs) // 10)):
+                    samples.append(paragraphs[i])
+                samples.extend(paragraphs[-5:])
+                
+                components = [f"=== COMPREHENSIVE PARAGRAPH SAMPLING ===\n" + 
+                            '\n\n'.join([f"[Para {i+1}]\n{p}" for i, p in enumerate(samples[:30])])]
         
         return '\n\n'.join(components)
     
@@ -1067,13 +1180,14 @@ class PaperPreprocessor:
         """
         Extract structural elements for paper structure analysis.
         
-        Strategy:
+        ENHANCED STRATEGY (Multi-Point Sampling):
         - Full abstract
         - ALL section headings with hierarchy
-        - First and last paragraphs of each section
+        - Multi-point samples (beginning, middle, end) of each section
+        - Structural markers and transitions between sections
         - Full conclusion
         
-        Token reduction: ~85-90%
+        Token reduction: ~75-85%
         """
         sections = self._find_all_sections(full_text)
         components = []
@@ -1083,45 +1197,56 @@ class PaperPreprocessor:
         if abstract:
             components.append(f"=== ABSTRACT ===\n{abstract}")
         
-        # 2. Document structure - ALL headings
+        # 2. Document structure - ALL headings with hierarchy
         components.append("\n=== DOCUMENT STRUCTURE (ALL HEADINGS) ===")
         if sections:
             for i, section in enumerate(sections):
-                components.append(f"{i+1}. {section.heading} [{section.name}]")
+                indent = "  " * (section.name.count("_") if "_" in section.name else 0)
+                components.append(f"{indent}{i+1}. {section.heading} [{section.name}]")
         else:
             # Fallback: extract anything that looks like a heading
             heading_lines = []
             for line in full_text.split('\n'):
                 line = line.strip()
                 if line and len(line) < 100:
-                    # Check if looks like heading (numbered, capitalized, short)
                     if re.match(r'^(?:\d+\.?\s*|[IVXLC]+\.?\s*)?[A-Z]', line):
                         if len(line.split()) <= 10:
                             heading_lines.append(line)
-            for i, heading in enumerate(heading_lines[:50]):  # Limit to 50
+            for i, heading in enumerate(heading_lines[:50]):
                 components.append(f"{i+1}. {heading}")
         
-        # 3. Section boundaries (first/last paragraphs)
-        components.append("\n=== SECTION BOUNDARIES ===")
-        for section in sections:
-            paragraphs = [p.strip() for p in section.content.split('\n\n') if p.strip()]
-            if paragraphs:
-                first_para = paragraphs[0][:800]
-                last_para = paragraphs[-1][:800] if len(paragraphs) > 1 else ""
-                
-                components.append(f"\n--- {section.heading} (OPENING) ---")
-                components.append(first_para)
-                
-                if last_para and last_para != first_para[:800]:
-                    components.append(f"\n--- {section.heading} (CLOSING) ---")
-                    components.append(last_para)
+        # 3. Multi-point structural samples from each section
+        components.append("\n=== SECTION STRUCTURE SAMPLES (BEGINNING, MIDDLE, END) ===")
+        if sections:
+            section_samples = self._sample_from_sections(sections, max_chars_per_section=5000)
+            components.append(section_samples)
         
-        # 4. Full conclusion for structural completeness check
+        # 4. Section transitions and boundaries
+        components.append("\n=== SECTION TRANSITIONS ===")
+        for i in range(min(len(sections) - 1, 10)):  # Limit to first 10 transitions
+            current = sections[i]
+            next_sec = sections[i + 1]
+            
+            # Get last paragraph of current
+            current_paras = [p.strip() for p in current.content.split('\n\n') if p.strip()]
+            last_para = current_paras[-1][:400] if current_paras else ""
+            
+            # Get first paragraph of next
+            next_paras = [p.strip() for p in next_sec.content.split('\n\n') if p.strip()]
+            first_para = next_paras[0][:400] if next_paras else ""
+            
+            components.append(f"\n[TRANSITION] {current.heading} → {next_sec.heading}")
+            if last_para:
+                components.append(f"  [CLOSING] {last_para[:300]}")
+            if first_para:
+                components.append(f"  [OPENING] {first_para[:300]}")
+        
+        # 5. Full conclusion for structural analysis
         conclusion = self._extract_sections_by_categories(
-            sections, ["conclusion", "future_work"], max_chars=6000
+            sections, ["conclusion", "future_work"], max_chars=7000
         )
         if conclusion:
-            components.append(f"\n=== FULL CONCLUSION ===\n{conclusion}")
+            components.append(f"\n=== FULL CONCLUSION (STRUCTURAL COMPLETENESS) ===\n{conclusion}")
         
         return '\n\n'.join(components)
     
@@ -1202,15 +1327,15 @@ class PaperPreprocessor:
         """
         Extract logical structure for clarity of thought analysis.
         
-        Strategy:
+        ENHANCED STRATEGY (Multi-Point Sampling):
         - Full abstract (main argument)
-        - Introduction with problem statement
-        - Key claims and contributions
-        - Methodology overview
-        - Main results/findings
+        - Introduction with problem statement (multi-point sampling)
+        - Key claims and contributions throughout paper
+        - Methodology and approach overview
+        - Main results/findings (multi-point sampling from different parts)
         - Full conclusion
         
-        Token reduction: ~70-80%
+        Token reduction: ~60-70%
         """
         sections = self._find_all_sections(full_text)
         components = []
@@ -1220,54 +1345,65 @@ class PaperPreprocessor:
         if abstract:
             components.append(f"=== ABSTRACT (MAIN ARGUMENT) ===\n{abstract}")
         
-        # 2. Introduction - problem statement and hypothesis
+        # 2. Introduction - problem statement with multi-point sampling
         intro = self._extract_sections_by_categories(
-            sections, ["introduction"], max_chars=10000
+            sections, ["introduction"], max_chars=12000
         )
         if intro:
-            components.append(f"\n=== INTRODUCTION (PROBLEM STATEMENT) ===\n{intro}")
+            components.append(f"\n=== INTRODUCTION (PROBLEM STATEMENT - FULL) ===\n{intro}")
         
-        # 3. Key claims - extract sentences with claim indicators
-        components.append("\n=== KEY CLAIMS AND CONTRIBUTIONS ===")
+        # 3. Key claims - extract from throughout the paper (not just first occurrence)
+        components.append("\n=== KEY CLAIMS AND CONTRIBUTIONS (SAMPLED) ===")
         claim_sentences = []
         sentences = re.split(r'(?<=[.!?])\s+', full_text)
-        for sentence in sentences:
-            sentence_lower = sentence.lower()
-            for indicator in self.CLAIM_INDICATORS:
-                if re.search(indicator, sentence_lower):
-                    claim_sentences.append(sentence.strip())
+        
+        # Sample claims from different parts of paper
+        claims_per_part = 10
+        part_size = len(sentences) // 3  # Divide into 3 parts
+        
+        for part in range(3):
+            start_idx = part * part_size
+            end_idx = (part + 1) * part_size if part < 2 else len(sentences)
+            
+            for sentence in sentences[start_idx:end_idx]:
+                sentence_lower = sentence.lower()
+                for indicator in self.CLAIM_INDICATORS:
+                    if re.search(indicator, sentence_lower):
+                        claim_sentences.append((sentence.strip(), part))
+                        break
+                if len(claim_sentences) > claims_per_part * (part + 1):
                     break
         
         if claim_sentences:
-            for claim in claim_sentences[:50]:  # Limit to 50 key claims
-                components.append(f"• {claim}")
+            for i, (claim, part) in enumerate(claim_sentences[:50]):
+                part_label = ["EARLY", "MIDDLE", "LATE"][part]
+                components.append(f"• [{part_label}] {claim[:300]}")
         else:
             components.append("(No explicit claim indicators found)")
         
-        # 4. Methodology overview
+        # 4. Methodology overview (multi-point sampling)
         methodology = self._extract_sections_by_categories(
-            sections, ["methodology", "model", "theory"], max_chars=6000
+            sections, ["methodology", "model", "theory"], max_chars=8000
         )
         if methodology:
             components.append(f"\n=== METHODOLOGY OVERVIEW ===\n{methodology}")
         
-        # 5. Results/findings highlights
-        results = self._extract_sections_by_categories(
-            sections, ["results", "experiments"], max_chars=5000
-        )
-        if results:
-            components.append(f"\n=== KEY RESULTS ===\n{results}")
+        # 5. Results/findings with multi-point sampling
+        results_sections = [s for s in sections if s.name in ["results", "experiments"]]
+        if results_sections:
+            components.append(f"\n=== KEY RESULTS (MULTI-POINT SAMPLES) ===")
+            components.append(self._sample_from_sections(results_sections, max_chars_per_section=7000))
         
         # 6. Discussion (reasoning about findings)
         discussion = self._extract_sections_by_categories(
-            sections, ["discussion"], max_chars=4000
+            sections, ["discussion"], max_chars=6000
         )
         if discussion:
             components.append(f"\n=== DISCUSSION (REASONING) ===\n{discussion}")
         
         # 7. Full conclusion
         conclusion = self._extract_sections_by_categories(
-            sections, ["conclusion", "future_work"], max_chars=6000
+            sections, ["conclusion", "future_work"], max_chars=7000
         )
         if conclusion:
             components.append(f"\n=== CONCLUSION ===\n{conclusion}")
@@ -1278,14 +1414,14 @@ class PaperPreprocessor:
         """
         Extract transition elements for flow analysis.
         
-        Strategy:
+        ENHANCED STRATEGY (Multi-Point Sampling):
         - Abstract (narrative tone)
-        - Section transitions (end of one + start of next)
-        - Paragraph boundaries (first/last sentences)
-        - Signpost phrases in context
-        - Conclusion
+        - Section transitions (all transitions analyzed)
+        - Multi-point paragraph sampling (beginning, middle, end)
+        - Signpost phrases sampled from different paper sections
+        - Conclusion (narrative resolution)
         
-        Token reduction: ~80-85%
+        Token reduction: ~70-80%
         """
         sections = self._find_all_sections(full_text)
         components = []
@@ -1295,60 +1431,77 @@ class PaperPreprocessor:
         if abstract:
             components.append(f"=== ABSTRACT (NARRATIVE TONE) ===\n{abstract}")
         
-        # 2. Section transitions
-        components.append("\n=== SECTION TRANSITIONS ===")
+        # 2. ALL section transitions with full context
+        components.append("\n=== SECTION TRANSITIONS (FLOW ANALYSIS) ===")
         for i in range(len(sections) - 1):
             current_section = sections[i]
             next_section = sections[i + 1]
             
-            # Get last paragraph of current section
+            # Get last 2 paragraphs of current section
             current_paragraphs = [p.strip() for p in current_section.content.split('\n\n') if p.strip()]
-            last_para = current_paragraphs[-1][:600] if current_paragraphs else ""
+            last_paras = current_paragraphs[-2:] if len(current_paragraphs) > 1 else current_paragraphs
             
-            # Get first paragraph of next section
+            # Get first 2 paragraphs of next section
             next_paragraphs = [p.strip() for p in next_section.content.split('\n\n') if p.strip()]
-            first_para = next_paragraphs[0][:600] if next_paragraphs else ""
+            first_paras = next_paragraphs[:2]
             
-            components.append(f"\n--- Transition: {current_section.heading} → {next_section.heading} ---")
-            if last_para:
-                components.append(f"[END] {last_para}")
-            if first_para:
-                components.append(f"[START] {first_para}")
+            components.append(f"\n=== TRANSITION: {current_section.heading} → {next_section.heading} ===")
+            for para in last_paras:
+                if para:
+                    components.append(f"[END OF {current_section.heading}] {para[:600]}")
+            for para in first_paras:
+                if para:
+                    components.append(f"[START OF {next_section.heading}] {para[:600]}")
         
-        # 3. Paragraph-level flow sampling
-        components.append("\n=== PARAGRAPH FLOW SAMPLING ===")
+        # 3. Multi-point paragraph flow sampling
+        components.append("\n=== PARAGRAPH FLOW SAMPLING (BEGINNING, MIDDLE, END) ===")
         paragraphs = [p.strip() for p in full_text.split('\n\n') if len(p.strip()) > 50]
         
-        for i, para in enumerate(paragraphs[:40]):  # Sample up to 40 paragraphs
-            sentences = re.split(r'(?<=[.!?])\s+', para)
-            if sentences:
-                first_sent = sentences[0][:200]
-                last_sent = sentences[-1][:200] if len(sentences) > 1 else ""
-                components.append(f"\n[Para {i+1}]")
-                components.append(f"FIRST: {first_sent}")
-                if last_sent:
-                    components.append(f"LAST: {last_sent}")
+        if len(paragraphs) > 0:
+            # Sample from beginning
+            for i, para in enumerate(paragraphs[:10]):
+                components.append(f"[BEGIN-{i+1}] {para[:400]}")
+            
+            # Sample from middle
+            if len(paragraphs) > 20:
+                mid_start = (len(paragraphs) - 10) // 2
+                for i, para in enumerate(paragraphs[mid_start:mid_start + 10]):
+                    components.append(f"[MID-{i+1}] {para[:400]}")
+            
+            # Sample from end
+            if len(paragraphs) > 10:
+                for i, para in enumerate(paragraphs[-10:]):
+                    components.append(f"[END-{i+1}] {para[:400]}")
         
-        # 4. Signpost phrases in context
-        components.append("\n=== SIGNPOST PHRASES (TRANSITIONS) ===")
+        # 4. Signpost phrases sampled from different paper parts
+        components.append("\n=== SIGNPOST PHRASES (TRANSITIONS - SAMPLED) ===")
         signpost_contexts = []
         sentences = re.split(r'(?<=[.!?])\s+', full_text)
         
-        for sentence in sentences:
-            sentence_lower = sentence.lower()
-            for phrase_pattern in self.SIGNPOST_PHRASES:
-                if re.search(phrase_pattern, sentence_lower):
-                    signpost_contexts.append(sentence.strip()[:300])
+        # Divide sentences into thirds and sample from each
+        third_size = len(sentences) // 3
+        for part_idx in range(3):
+            part_label = ["EARLY", "MIDDLE", "LATE"][part_idx]
+            start_idx = part_idx * third_size
+            end_idx = (part_idx + 1) * third_size if part_idx < 2 else len(sentences)
+            
+            for sentence in sentences[start_idx:end_idx]:
+                sentence_lower = sentence.lower()
+                for phrase_pattern in self.SIGNPOST_PHRASES:
+                    if re.search(phrase_pattern, sentence_lower):
+                        signpost_contexts.append((sentence.strip()[:300], part_label))
+                        break
+                if len([s for s in signpost_contexts if s[1] == part_label]) > 5:
                     break
         
         # Include diverse sample of signposts
         if signpost_contexts:
-            for ctx in signpost_contexts[:30]:  # Limit to 30
-                components.append(f"• {ctx}")
+            for ctx, part in signpost_contexts[:30]:
+                components.append(f"• [{part}] {ctx}")
         
         # 5. Conclusion (narrative resolution)
         conclusion = self._extract_sections_by_categories(
-            sections, ["conclusion"], max_chars=5000
+            sections, ["conclusion"], max_chars=6000
         )
         if conclusion:
             components.append(f"\n=== CONCLUSION (NARRATIVE RESOLUTION) ===\n{conclusion}")

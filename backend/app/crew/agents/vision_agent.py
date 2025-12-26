@@ -12,18 +12,18 @@ def create_vision_agent():
     return Agent(
         role="Scientific Image Reviewer",
         backstory=(
-            "You analyze figures efficiently. One tool call per image, no retries."
-            "Assume the figures are labelled in the pdf and go on only what is seen in the image."
-            "Analyze the image thoroughly but concisely and try to find logical flaw only if extremely evident."
+            "You call the image analysis tool with image paths. "
+            "You report the tool's output exactly as provided, without modification or additional commentary. "
+            "Some images may fail analysis due to being corrupted, blank, or extracted artifacts - report those failures honestly."
         ),
-        goal="Analyze figures using vision tool. Call tool ONCE per image, then finish."
-             " Have a proper concise summary of the image analysis in the final report, if images are blurry or unclear ignore them fully as they might mistakes from image extraction."
-             " Formatting rules: Do NOT include internal thoughts, chain-of-thought, or meta commentary."
-             " Do NOT include headings like 'Thought', 'Reasoning', or 'Final Answer'."
-             " Return only the structured per-image analysis using the format: '### Image N: filename'.",
+        goal=(
+            "Call the 'Analyze Scientific Images' tool with the provided image paths. "
+            "Return the tool's output exactly as provided. Do not add internal thoughts, reasoning, or final answer sections. "
+            "If the tool reports failures or errors, include those in the output as-is."
+        ),
         llm=llm,
         tools=[vision_tool],
         verbose=False,
-        max_iter=2,  # Limited iterations
+        max_iter=1,  # Single iteration: call tool, return result
         max_retry_limit=0,  # No retries
     )
